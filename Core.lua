@@ -24,7 +24,12 @@ function L.GetCurrentProfessionSkill()
     return name, current, max
 end
 
+-- Accumulative known-recipe set per profession so isKnown never regresses when
+-- the tradeskill window filter/collapse state changes between opens.
+local _knownRecipesAccum = {}
+
 -- Build list of recipes for current profession. Optional filter: includeHoliday.
+-- Always re-reads from ala (no recipe list cache). If ala returns no data we fall back to native.
 function L.GetRecipeList(includeHoliday)
     if not GetNumTradeSkills then
         LoadAddOn("Blizzard_TradeSkillUI")
@@ -33,13 +38,30 @@ function L.GetRecipeList(includeHoliday)
     if not profName then return nil, "请先打开专业技能窗口" end
     includeHoliday = includeHoliday == nil and ProfLevelHelperDB.IncludeHolidayRecipes or includeHoliday
 
+    -- Clear name filter and select first slot so the tradeskill list (and ala) is in a known state.
+    if SetTradeSkillItemNameFilter then
+        SetTradeSkillItemNameFilter("")
+    end
+    if SelectTradeSkill and type(SelectTradeSkill) == "function" then
+        SelectTradeSkill(1)
+    end
+
     local list = {}
     local knownRecipes = {}
     local num = GetNumTradeSkills and GetNumTradeSkills() or 0
     for i = 1, num do
-        local name = GetTradeSkillInfo(i)
-        if name then knownRecipes[name] = true end
+        local name, skillType = GetTradeSkillInfo(i)
+        if name and skillType and skillType ~= "header" then
+            knownRecipes[name] = true
+        end
     end
+
+    if _knownRecipesAccum[profName] then
+        for name in pairs(_knownRecipesAccum[profName]) do
+            knownRecipes[name] = true
+        end
+    end
+    _knownRecipesAccum[profName] = knownRecipes
 
     local ala = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
     if ala and ala.get_pid_by_pname then
@@ -65,7 +87,18 @@ function L.GetRecipeList(includeHoliday)
                             
                             local isTrainer = info and info[14]
                             local trainPrice = info and info[15]
-                            local recipeItemIDs = info and info[16]
+                            -- Deep-copy info[16] so our rec owns the item IDs independently of ala's
+                            -- internal state. A direct reference would become stale when ala reloads
+                            -- or clears its data (e.g. after closing and reopening the tradeskill frame),
+                            -- causing GetRecipeAcquisitionCost to find no prices and wrongly mark the
+                            -- recipe as "未知来源", which then gets filtered out.
+                            local recipeItemIDs = nil
+                            if info and info[16] and type(info[16]) == "table" then
+                                recipeItemIDs = {}
+                                for _, rid in ipairs(info[16]) do
+                                    recipeItemIDs[#recipeItemIDs + 1] = rid
+                                end
+                            end
                             
                             list[#list + 1] = {
                                 name = name,

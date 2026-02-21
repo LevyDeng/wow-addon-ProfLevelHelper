@@ -286,11 +286,10 @@ end
 
 function L.ShowResultList()
     local includeHoliday = ProfLevelHelperDB.IncludeHolidayRecipes
-    
     local _, pCurr, pMax = L.GetCurrentProfessionSkill()
     local startSkill = ProfLevelHelperDB.TargetSkillStart or pCurr or 1
     local endSkill = ProfLevelHelperDB.TargetSkillEnd or pMax or 350
-    
+
     local route, profName, actualStart, actualEnd, totalCost = L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
     if not route or #route == 0 then
         local s = actualStart or startSkill or "?"
