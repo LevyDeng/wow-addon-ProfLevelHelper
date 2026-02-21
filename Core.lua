@@ -19,7 +19,8 @@ end
 -- Get profession name and current skill (when tradeskill frame is open).
 function L.GetCurrentProfessionSkill()
     if not GetTradeSkillLine then return nil, 0, 0 end
-    local name, _, current, max = GetTradeSkillLine()
+    -- WotLK GetTradeSkillLine returns: name, currentLevel, maxLevel, skillLineModifier
+    local name, current, max = GetTradeSkillLine()
     if not name or name == "" then return nil, 0, 0 end
     return name, current, max
 end
@@ -140,26 +141,26 @@ function L.BuildLevelingTable(includeHoliday)
             end
         end
         if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
-        if chance <= 0 then goto continue end
+        
+        if chance > 0 then
+            local recipeCost = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
+            local matCost = L.CraftCost(rec.reagents, nil, 0)
+            local totalPerCraft = matCost
+            local expectedCrafts = chance > 0 and (1 / chance) or 999
+            local costPerSkillPoint = totalPerCraft * expectedCrafts
+            -- Amortize one-time recipe cost over expected crafts for this recipe's skill range (simplified: over 1 skillup).
+            costPerSkillPoint = costPerSkillPoint + (recipeCost or 0)
 
-        local recipeCost = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
-        local matCost = L.CraftCost(rec.reagents, nil, 0)
-        local totalPerCraft = matCost
-        local expectedCrafts = chance > 0 and (1 / chance) or 999
-        local costPerSkillPoint = totalPerCraft * expectedCrafts
-        -- Amortize one-time recipe cost over expected crafts for this recipe's skill range (simplified: over 1 skillup).
-        costPerSkillPoint = costPerSkillPoint + (recipeCost or 0)
-
-        result[#result + 1] = {
-            name = rec.name,
-            index = rec.index,
-            chance = chance,
-            matCost = matCost,
-            recipeCost = recipeCost or 0,
-            costPerSkillPoint = costPerSkillPoint,
-            reagents = rec.reagents,
-        }
-        ::continue::
+            result[#result + 1] = {
+                name = rec.name,
+                index = rec.index,
+                chance = chance,
+                matCost = matCost,
+                recipeCost = recipeCost or 0,
+                costPerSkillPoint = costPerSkillPoint,
+                reagents = rec.reagents,
+            }
+        end
     end
     table.sort(result, function(a, b) return (a.costPerSkillPoint or 999999) < (b.costPerSkillPoint or 999999) end)
     return result, profName, currentSkill
