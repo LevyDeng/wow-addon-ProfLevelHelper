@@ -133,13 +133,15 @@ function L.OpenOptions()
     f:SetSize(320, 340)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
+    -- Make sure it floats visually above ResultFrame
+    if L.ResultFrame then f:SetFrameLevel(L.ResultFrame:GetFrameLevel() + 10) end
     f:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
         tile = true, tileSize = 32, edgeSize = 32,
         insets = { left = 11, right = 12, top = 12, bottom = 11 },
     })
-    f:SetBackdropColor(0, 0, 0, 0.9)
+    f:SetBackdropColor(0, 0, 0, 1)
     f:EnableMouse(true)
     f:SetMovable(true)
     f:RegisterForDrag("LeftButton")
@@ -308,6 +310,15 @@ function L.ShowResultList()
         close:SetScript("OnClick", function() f:Hide() end)
         f.closeBtn = close
 
+        local exportBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        exportBtn:SetSize(100, 22)
+        exportBtn:SetPoint("BOTTOM", 0, 12)
+        exportBtn:SetText("复制到剪贴板")
+        exportBtn:SetScript("OnClick", function() 
+            if L.ShowExportFrame then L.ShowExportFrame() end 
+        end)
+        f.exportBtn = exportBtn
+
         local optionsBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
         optionsBtn:SetSize(100, 22)
         optionsBtn:SetPoint("BOTTOMLEFT", 20, 12)
@@ -388,8 +399,114 @@ function L.ShowResultList()
         if not currentHeight or currentHeight == 0 then currentHeight = 38 end
         y = y + currentHeight + 16
     end
+
+    -- Add a big Total Cost text at the bottom
+    local sumLine = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+    table.insert(content.lines, sumLine)
+    sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
+    sumLine:SetJustifyH("LEFT")
+    sumLine:SetText("============\n总计预计花费: " .. CopperToGold(totalCost) .. "\n============")
+    sumLine:Show()
+
+    y = y + 80
     content:SetHeight(y)
 
+    L.CurrentRouteData = {
+        route = route,
+        startS = actualStart,
+        endS = actualEnd,
+        totalCost = totalCost,
+        profName = profName
+    }
+
+    f:Show()
+end
+
+function L.ShowExportFrame()
+    local data = L.CurrentRouteData
+    if not data then return end
+    
+    local f = L.ExportFrame
+    if not f then
+        f = CreateFrame("Frame", "ProfLevelHelperExport", UIParent, "BackdropTemplate")
+        L.ExportFrame = f
+        f:SetSize(500, 400)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.ResultFrame then f:SetFrameLevel(L.ResultFrame:GetFrameLevel() + 20) end
+        f:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -16)
+        title:SetText("按下 Ctrl+C 复制以下文本")
+        
+        local sf = CreateFrame("ScrollFrame", "ProfLevelHelperExportScroll", f, "UIPanelScrollFrameTemplate")
+        sf:SetPoint("TOPLEFT", 20, -40)
+        sf:SetPoint("BOTTOMRIGHT", -36, 46)
+        
+        local eb = CreateFrame("EditBox", nil, sf)
+        eb:SetMultiLine(true)
+        eb:SetFontObject("ChatFontNormal")
+        eb:SetWidth(430)
+        eb:SetAutoFocus(true)
+        eb:SetScript("OnEscapePressed", function() f:Hide() end)
+        sf:SetScrollChild(eb)
+        f.editBox = eb
+        
+        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        close:SetSize(100, 22)
+        close:SetPoint("BOTTOM", 0, 12)
+        close:SetText("关闭")
+        close:SetScript("OnClick", function() f:Hide() end)
+    end
+    
+    local c = data.totalCost
+    local g = math.floor(c / 10000)
+    local s = math.floor((c % 10000) / 100)
+    local co = math.floor(c % 100)
+    local costStr = string.format("%d金 %d银 %d铜", g, s, co)
+    
+    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计花费: %s\n\n", data.profName, data.startS, data.endS, costStr)
+    local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+
+    for _, seg in ipairs(data.route) do
+        local rNameC = seg.recipe.name or "?"
+        local reqStr = ""
+        for _, r in ipairs(seg.recipe.reagents or {}) do
+            local itemName = r.name
+            if not itemName and r.itemID then
+                if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(r.itemID) end
+                if not itemName then local iname = GetItemInfo(r.itemID) if iname then itemName = iname end end
+            end
+            if not itemName then itemName = "ID:" .. tostring(r.itemID) end
+            local totQty = math.ceil(r.count * seg.totalCrafts)
+            reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+        end
+        if reqStr == "" then reqStr = "无或由材料制成" end
+        
+        local acq = seg.recSource and ("来源:"..seg.recSource) or ""
+        local segC = seg.segmentTotalCost or 0
+        local sg = math.floor(segC / 10000)
+        local ss = math.floor((segC % 10000) / 100)
+        local sco = math.floor(segC % 100)
+        local segCostStr = string.format("%d金 %d银 %d铜", sg, ss, sco)
+        
+        txt = txt .. string.format("[%d-%d] %s x%.0f次 | 花费: %s | (%s) - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, segCostStr, acq, reqStr)
+    end
+    
+    f.editBox:SetText(txt)
+    f.editBox:HighlightText()
     f:Show()
 end
 
