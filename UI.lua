@@ -130,7 +130,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 340)
+    f:SetSize(320, 370)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -217,8 +217,29 @@ function L.OpenOptions()
     end)
     f.endInput = endInput
 
+    -- Input Outlier Percent
+    local pctLabel = f.pctLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pctLabel:SetPoint("TOPLEFT", 24, -170)
+    pctLabel:SetText("异常低价过滤比例 (%):")
+    f.pctLabel = pctLabel
+    local pctInput = f.pctInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    pctInput:SetSize(40, 20)
+    pctInput:SetPoint("LEFT", pctLabel, "RIGHT", 10, 0)
+    pctInput:SetAutoFocus(false)
+    pctInput:SetNumeric(true)
+    local currPct = ProfLevelHelperDB.IgnoredOutlierPercent
+    if currPct == nil then currPct = 0.10 end
+    pctInput:SetText(tostring(math.floor(currPct * 100)))
+    pctInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val then 
+            ProfLevelHelperDB.IgnoredOutlierPercent = val / 100.0 
+        end
+    end)
+    f.pctInput = pctInput
+
     -- Source Filters
-    local yOfs = -170
+    local yOfs = -200
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
