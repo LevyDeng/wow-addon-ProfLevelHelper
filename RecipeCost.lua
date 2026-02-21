@@ -1,61 +1,66 @@
 --[[
-  Recipe acquisition cost: minimum of AH price, vendor price, trainer cost.
-  Player already known = 0. Otherwise use scanned AH, VendorPrices (from merchant scan), or TrainerCosts.
+  Recipe acquisition cost: min of AH, vendor, trainer.
 ]]
 
-ProfLevelHelper.RecipeThresholds = ProfLevelHelper.RecipeThresholds or {} -- [profName][recipeName] = { yellow, gray }
+ProfLevelHelper.RecipeThresholds = ProfLevelHelper.RecipeThresholds or {}
 
--- Check if player already knows this recipe (current profession window).
 function ProfLevelHelper.PlayerKnowsRecipe(recipeIndex)
-    if not GetTradeSkillInfo or not recipeIndex then return false end
+    if not GetTradeSkillInfo or type(recipeIndex) ~= "number" then return false end
     local name, skillType = GetTradeSkillInfo(recipeIndex)
     return name and skillType and skillType ~= "header" and skillType ~= "difficult"
 end
 
--- Get recipe item ID from link (pattern/schematic/recipe item).
 local function GetRecipeItemID(recipeLink)
     if not recipeLink or type(recipeLink) ~= "string" then return nil end
     local id = recipeLink:match("item:(%d+)")
     return id and tonumber(id) or nil
 end
 
--- Get spell ID from recipe link (e.g. enchant) if it's a spell.
 local function GetRecipeSpellID(recipeLink)
     if not recipeLink or type(recipeLink) ~= "string" then return nil end
     local id = recipeLink:match("enchant:(%d+)") or recipeLink:match("spell:(%d+)")
     return id and tonumber(id) or nil
 end
 
--- Recipe acquisition cost (copper): 0 if known, else min(AH, vendor, trainer).
-function ProfLevelHelper.GetRecipeAcquisitionCost(recipeEntry)
-    if not recipeEntry then return nil end
-    local index = recipeEntry.index
-    if ProfLevelHelper.PlayerKnowsRecipe(index) then return 0 end
+function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
+    if not rec then return nil end
+    if rec.isKnown then return 0 end
+    
+    -- Fallback for native API
+    if rec.index and ProfLevelHelper.PlayerKnowsRecipe(rec.index) then return 0 end
 
-    local itemID = GetRecipeItemID(recipeEntry.recipeLink)
-    local spellID = GetRecipeSpellID(recipeEntry.recipeLink)
-    local name = recipeEntry.name
     local db = ProfLevelHelperDB
     local cost = nil
 
-    -- AH price (from scan)
-    if itemID and db.AHPrices and db.AHPrices[itemID] and db.AHPrices[itemID] > 0 then
-        cost = (cost == nil or db.AHPrices[itemID] < cost) and db.AHPrices[itemID] or cost
-    end
-
-    -- Vendor price (from merchant scan or GetItemInfo)
-    if itemID then
-        local vendorPrice = db.VendorPrices and db.VendorPrices[itemID]
+    local function checkPrice(id)
+        if not id then return end
+        if db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0 then
+            cost = (cost == nil or db.AHPrices[id] < cost) and db.AHPrices[id] or cost
+        end
+        local vendorPrice = db.VendorPrices and db.VendorPrices[id]
         if not vendorPrice and GetItemInfo then
-            local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(itemID)
-            vendorPrice = vp
+            local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(id)
+            if vp and vp > 0 then vendorPrice = vp * 4 end
         end
         if vendorPrice and vendorPrice > 0 then
             cost = (cost == nil or vendorPrice < cost) and vendorPrice or cost
         end
     end
 
-    -- Trainer cost (saved or 0)
+    if rec.recipeItemIDs and type(rec.recipeItemIDs) == "table" then
+        for _, id in ipairs(rec.recipeItemIDs) do
+            checkPrice(id)
+        end
+    elseif rec.recipeLink then
+        checkPrice(GetRecipeItemID(rec.recipeLink))
+    end
+
+    if rec.isTrainer and rec.trainPrice and rec.trainPrice >= 0 then
+        cost = (cost == nil or rec.trainPrice < cost) and rec.trainPrice or cost
+    end
+
+    local spellID = (rec.recipeLink and GetRecipeSpellID(rec.recipeLink)) or rec.sid
+    local name = rec.name
     local trainerCost = db.TrainerCosts and (db.TrainerCosts[spellID or name] or db.TrainerCosts[name])
     if trainerCost and trainerCost >= 0 then
         cost = (cost == nil or trainerCost < cost) and trainerCost or cost
@@ -64,7 +69,6 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(recipeEntry)
     return cost
 end
 
--- Record vendor price when merchant frame is open (call from Scan.lua on MERCHANT_SHOW).
 function ProfLevelHelper.RecordVendorPrices()
     if not GetMerchantNumItems then return end
     local db = ProfLevelHelperDB

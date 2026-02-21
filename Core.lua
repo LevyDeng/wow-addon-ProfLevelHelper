@@ -19,29 +19,80 @@ end
 -- Get profession name and current skill (when tradeskill frame is open).
 function L.GetCurrentProfessionSkill()
     if not GetTradeSkillLine then return nil, 0, 0 end
-    -- WotLK GetTradeSkillLine returns: name, currentLevel, maxLevel, skillLineModifier
     local name, current, max = GetTradeSkillLine()
     if not name or name == "" then return nil, 0, 0 end
     return name, current, max
 end
 
 -- Build list of recipes for current profession. Optional filter: includeHoliday.
--- Returns array of { name, index, skillType, numSkillUps, reagents, recipeLink }.
--- Recipe thresholds (yellow/gray) come from data or fallback from skillType.
 function L.GetRecipeList(includeHoliday)
     if not GetNumTradeSkills then
         LoadAddOn("Blizzard_TradeSkillUI")
     end
-    local profName, currentSkill = L.GetCurrentProfessionSkill()
-    if not profName then return nil, "Open profession window first" end
+    local profName, currentSkill, maxSkill = L.GetCurrentProfessionSkill()
+    if not profName then return nil, "请先打开专业技能窗口" end
     includeHoliday = includeHoliday == nil and ProfLevelHelperDB.IncludeHolidayRecipes or includeHoliday
 
     local list = {}
+    local knownRecipes = {}
     local num = GetNumTradeSkills and GetNumTradeSkills() or 0
+    for i = 1, num do
+        local name = GetTradeSkillInfo(i)
+        if name then knownRecipes[name] = true end
+    end
+
+    local ala = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+    if ala and ala.get_pid_by_pname then
+        local pid = ala.get_pid_by_pname(profName)
+        if pid then
+            local sids = ala.get_list_by_pid(pid)
+            if sids then
+                for _, sid in ipairs(sids) do
+                    local name = GetSpellInfo(sid)
+                    if name and (includeHoliday or not L.IsHolidayRecipe(name, profName)) then
+                        local learn, yellow, green, grey = ala.get_difficulty_rank_list_by_sid(sid)
+                        local r_ids, r_counts = ala.get_reagents_by_sid(sid)
+                        local info = ala.get_info_by_sid(sid)
+                        
+                        if learn and grey then
+                            local reagents = {}
+                            if r_ids and r_counts then
+                                for idx, rid in ipairs(r_ids) do
+                                    local rCount = r_counts[idx] or 1
+                                    reagents[#reagents + 1] = { itemID = rid, count = rCount }
+                                end
+                            end
+                            
+                            local isTrainer = info and info[14]
+                            local trainPrice = info and info[15]
+                            local recipeItemIDs = info and info[16]
+                            
+                            list[#list + 1] = {
+                                name = name,
+                                sid = sid,
+                                learn = learn,
+                                yellow = yellow,
+                                green = green,
+                                grey = grey,
+                                reagents = reagents,
+                                isTrainer = isTrainer,
+                                trainPrice = trainPrice,
+                                recipeItemIDs = recipeItemIDs,
+                                isKnown = knownRecipes[name] or false,
+                                index = sid,
+                            }
+                        end
+                    end
+                end
+                return list, profName, currentSkill
+            end
+        end
+    end
+
+    -- Fallback to native scan
     for i = 1, num do
         local name, skillType, numAvailable, _, _, numSkillUps = GetTradeSkillInfo(i)
         if name and skillType and skillType ~= "header" and name ~= "Other" then
-            -- Optional: skip holiday recipes (can be marked in data later)
             if includeHoliday or not L.IsHolidayRecipe(name, profName) then
                 local reagents = {}
                 local numReagents = GetTradeSkillNumReagents and GetTradeSkillNumReagents(i) or 0
@@ -59,6 +110,7 @@ function L.GetRecipeList(includeHoliday)
                     numSkillUps = numSkillUps,
                     reagents = reagents,
                     recipeLink = link,
+                    isKnown = true,
                 }
             end
         end
@@ -66,20 +118,18 @@ function L.GetRecipeList(includeHoliday)
     return list, profName, currentSkill
 end
 
--- Placeholder: mark holiday/seasonal recipes (extend with data later).
+-- Placeholder: mark holiday/seasonal recipes.
 function L.IsHolidayRecipe(recipeName, profName)
-    -- Optional: ProfLevelHelperDB.HolidayRecipes[profName][recipeName] or pattern match
     return false
 end
 
--- Get yellow/gray skill levels for a recipe. Uses static data if available, else approximates from skillType.
+-- Get yellow/gray skill levels for a recipe. Uses static data if available, else approximates.
 function L.GetRecipeThresholds(recipeName, profName, currentSkill)
     local data = ProfLevelHelper.RecipeThresholds and ProfLevelHelper.RecipeThresholds[profName]
         and ProfLevelHelper.RecipeThresholds[profName][recipeName]
     if data and data.yellow and data.gray then
         return data.yellow, data.gray
     end
-    -- Fallback: no static data - use approximate range so formula gives reasonable chance.
     local _, _, maxSkill = L.GetCurrentProfessionSkill()
     maxSkill = maxSkill or 300
     currentSkill = currentSkill or 0
@@ -89,23 +139,24 @@ function L.GetRecipeThresholds(recipeName, profName, currentSkill)
 end
 
 -- Cost per one craft: materials (from AH or vendor) + recipe acquisition (once per recipe).
--- recipeAcquisitionCost is passed from RecipeCost module (min of AH/vendor/trainer).
-function L.CraftCost(reagents, recipeAcquisitionCost, oneTimeRecipeCost)
-    local cost = oneTimeRecipeCost or 0
+function L.CraftCost(reagents)
+    local cost = 0
     for _, r in ipairs(reagents or {}) do
-        local unitPrice = L.GetItemPrice(r.name)
+        local unitPrice = L.GetItemPrice(r.itemID or r.name)
         cost = cost + (unitPrice or 0) * (r.count or 0)
     end
     return cost
 end
 
--- Resolve item name to price: AH (scanned) then vendor. Returns copper.
-function L.GetItemPrice(itemNameOrLink)
-    local id = type(itemNameOrLink) == "number" and itemNameOrLink or nil
-    if not id and type(itemNameOrLink) == "string" then
-        id = tonumber(itemNameOrLink:match("item:(%d+)"))
+-- Resolve item name or id to price: AH then vendor. Returns copper.
+function L.GetItemPrice(itemNameOrLinkOrId)
+    local id = type(itemNameOrLinkOrId) == "number" and itemNameOrLinkOrId or nil
+    if type(itemNameOrLinkOrId) == "string" then
+        if not id then
+            id = tonumber(itemNameOrLinkOrId:match("item:(%d+)"))
+        end
         if not id and ProfLevelHelperDB.NameToID then
-            id = ProfLevelHelperDB.NameToID[itemNameOrLink]
+            id = ProfLevelHelperDB.NameToID[itemNameOrLinkOrId]
         end
     end
     if id and ProfLevelHelperDB.AHPrices and ProfLevelHelperDB.AHPrices[id] then
@@ -114,52 +165,64 @@ function L.GetItemPrice(itemNameOrLink)
     if id and ProfLevelHelperDB.VendorPrices and ProfLevelHelperDB.VendorPrices[id] then
         return ProfLevelHelperDB.VendorPrices[id]
     end
-    -- Fallback: GetItemInfo vendor price (sell price; buy often higher - use as hint)
+    -- Fallback: GetItemInfo vendor price (sell price; buy often roughly 4x higher)
     if id then
         local _, _, _, _, _, _, _, _, _, _, vendorPrice = GetItemInfo(id)
         if vendorPrice and vendorPrice > 0 then
-            return vendorPrice
+            return vendorPrice * 4
         end
     end
-    return nil
+    return 0 -- Failed to calculate
 end
 
--- Build leveling table: for each recipe, expected cost per skill point at current skill.
+-- Build leveling table
 function L.BuildLevelingTable(includeHoliday)
     local recipes, profName, currentSkill = L.GetRecipeList(includeHoliday)
     if not recipes or #recipes == 0 then return nil, profName, currentSkill end
 
     local result = {}
     for _, rec in ipairs(recipes) do
-        local yellow, gray = L.GetRecipeThresholds(rec.name, profName, currentSkill)
-        local chance = L.CalcSkillUpChance(gray, yellow, currentSkill)
-        -- Fallback when no threshold data: use skillType (optimal=100%, easy~60%, medium~30%, trivial/difficult=0%)
-        if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
-            if rec.skillType == "optimal" then chance = 1
-            elseif rec.skillType == "easy" then chance = 0.6
-            elseif rec.skillType == "medium" then chance = 0.3
-            end
+        local canProcess = true
+        if rec.learn and currentSkill < rec.learn then 
+            canProcess = false 
         end
-        if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
-        
-        if chance > 0 then
-            local recipeCost = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
-            local matCost = L.CraftCost(rec.reagents, nil, 0)
-            local totalPerCraft = matCost
-            local expectedCrafts = chance > 0 and (1 / chance) or 999
-            local costPerSkillPoint = totalPerCraft * expectedCrafts
-            -- Amortize one-time recipe cost over expected crafts for this recipe's skill range (simplified: over 1 skillup).
-            costPerSkillPoint = costPerSkillPoint + (recipeCost or 0)
 
-            result[#result + 1] = {
-                name = rec.name,
-                index = rec.index,
-                chance = chance,
-                matCost = matCost,
-                recipeCost = recipeCost or 0,
-                costPerSkillPoint = costPerSkillPoint,
-                reagents = rec.reagents,
-            }
+        if canProcess then
+            local yellow, gray = rec.yellow, rec.grey
+            if not yellow or not gray then
+                yellow, gray = L.GetRecipeThresholds(rec.name, profName, currentSkill)
+            end
+            
+            local chance = L.CalcSkillUpChance(gray, yellow, currentSkill)
+            if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
+                if rec.skillType == "optimal" then chance = 1
+                elseif rec.skillType == "easy" then chance = 0.6
+                elseif rec.skillType == "medium" then chance = 0.3
+                end
+            end
+            if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
+            
+            if chance > 0 then
+                local recipeCost = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
+                if rec.isKnown or recipeCost ~= nil then
+                    local matCost = L.CraftCost(rec.reagents)
+                    local totalPerCraft = matCost
+                    local expectedCrafts = chance > 0 and (1 / chance) or 999
+                    local costPerSkillPoint = totalPerCraft * expectedCrafts
+                    costPerSkillPoint = costPerSkillPoint + (recipeCost or 0)
+
+                    result[#result + 1] = {
+                        name = rec.name,
+                        index = rec.index,
+                        chance = chance,
+                        matCost = matCost,
+                        recipeCost = recipeCost or 0,
+                        costPerSkillPoint = costPerSkillPoint,
+                        reagents = rec.reagents,
+                        isKnown = rec.isKnown,
+                    }
+                end
+            end
         end
     end
     table.sort(result, function(a, b) return (a.costPerSkillPoint or 999999) < (b.costPerSkillPoint or 999999) end)
