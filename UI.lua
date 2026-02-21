@@ -229,7 +229,12 @@ function L.OpenOptions()
     pctInput:SetNumeric(true)
     local currPct = ProfLevelHelperDB.IgnoredOutlierPercent
     if currPct == nil then currPct = 0.10 end
-    pctInput:SetText(tostring(math.floor(currPct * 100)))
+    if currPct > 1 then
+        ProfLevelHelperDB.IgnoredOutlierPercent = currPct / 100
+        currPct = currPct / 100
+    end
+    currPct = math.max(0, math.min(100, math.floor(currPct * 100)))
+    pctInput:SetText(tostring(currPct))
     pctInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
         if val then 
@@ -264,7 +269,7 @@ function L.OpenOptions()
     createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
 
     local feedback = f.feedbackText or f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    feedback:SetPoint("BOTTOM", 0, 42)
+    feedback:SetPoint("BOTTOM", 0, 38)
     feedback:SetText("反馈邮箱: ptrees@126.com")
     f.feedbackText = feedback
 
@@ -288,7 +293,9 @@ function L.ShowResultList()
     
     local route, profName, actualStart, actualEnd, totalCost = L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
     if not route or #route == 0 then
-        L.Print(profName and ("无法找到一条从 " .. actualStart .. " 到 ".. actualEnd .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
+        local s = actualStart or startSkill or "?"
+        local e = actualEnd or endSkill or "?"
+        L.Print(profName and ("无法找到一条从 " .. s .. " 到 ".. e .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
         return
     end
 
@@ -357,6 +364,7 @@ function L.ShowResultList()
 
     local function CopperToGold(c)
         if type(c) ~= "number" or c == 0 then return "0 铜" end
+        c = math.floor(c + 0.5) -- 确保永远是整数
         local g = math.floor(c / 10000)
         local s = math.floor((c % 10000) / 100)
         local co = math.floor(c % 100)

@@ -245,35 +245,49 @@ function L.FinishScan()
     db.AHPrices = db.AHPrices or {}
     
     local pct = db.IgnoredOutlierPercent
-    if pct == nil then pct = 0.10 end -- 默认忽略10%的极低价
+    if pct == nil then pct = 0.10 end -- default: ignore bottom 10% (outlier low prices)
+    if pct > 1 then pct = pct / 100 end -- normalize if saved as e.g. 10 instead of 0.10
+    pct = math.max(0, math.min(1, pct))
     
     L.Print("扫描完成，正在利用百分位过滤算法结算各物品基准价...")
     globalUpdatedCount = 0
     
     if L.TempAHData then
         for itemId, data in pairs(L.TempAHData) do
-            -- 按单价从低到高排序
-            table.sort(data.listings, function(a, b) return a.price < b.price end)
-            
-            -- 基准阈值 (至少1个，保护少量图纸)
-            local targetQ = math.max(1, math.ceil(data.totalQ * pct))
-            local accum = 0
-            local finalPrice = data.listings[1].price -- 兜底，绝对最低价
-            
-            for _, list in ipairs(data.listings) do
-                accum = accum + list.count
-                if accum >= targetQ then
-                    finalPrice = list.price
-                    break
+            if not data.listings or #data.listings == 0 then
+                -- skip items with no valid listings (defensive)
+            else
+                -- sort by unit price ascending
+                table.sort(data.listings, function(a, b) return (a.price or 0) < (b.price or 0) end)
+                
+                local firstPrice = data.listings[1] and data.listings[1].price
+                if firstPrice == nil or type(firstPrice) ~= "number" then
+                    -- skip invalid first listing
+                else
+                    -- benchmark: price at (pct * totalQ) quantity percentile
+                    local totalQ = data.totalQ or 0
+                    if totalQ <= 0 then totalQ = 1 end
+                    local targetQ = math.max(1, math.ceil(totalQ * pct))
+                    local accum = 0
+                    local finalPrice = firstPrice
+                    
+                    for _, list in ipairs(data.listings) do
+                        accum = accum + (list.count or 0)
+                        if list.price ~= nil and type(list.price) == "number" and accum >= targetQ then
+                            finalPrice = list.price
+                            break
+                        end
+                    end
+                    
+                    finalPrice = math.floor(finalPrice + 0.5)
+                    if type(finalPrice) == "number" and finalPrice >= 0 then
+                        local prev = db.AHPrices[itemId]
+                        if not prev or finalPrice ~= prev then
+                            db.AHPrices[itemId] = finalPrice
+                            globalUpdatedCount = globalUpdatedCount + 1
+                        end
+                    end
                 end
-            end
-            
-            finalPrice = math.floor(finalPrice + 0.5)
-            
-            local prev = db.AHPrices[itemId]
-            if not prev or finalPrice ~= prev then
-                db.AHPrices[itemId] = finalPrice
-                globalUpdatedCount = globalUpdatedCount + 1
             end
         end
     end
@@ -283,7 +297,7 @@ function L.FinishScan()
     L.HideScanProgress()
     L.UpdateScanButtonState()
     L.Print(string.format("全量扫描并结算圆满结束！当前记录了 %d 种物品的价格 (新增/更新: %d, 极低价过滤比例: %d%%)。", 
-        L.TableCount(db.AHPrices), globalUpdatedCount, math.floor(pct * 100)))
+        L.TableCount(db.AHPrices), globalUpdatedCount, math.floor((pct or 0) * 100)))
 end
 
 function L.TableCount(t)

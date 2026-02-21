@@ -209,11 +209,15 @@ end
 -- Calculate global cheapest route using Dynamic Programming (Shortest Path)
 function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local recipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
-    if not recipes or #recipes == 0 then return nil, profName, currentSkill end
+    if not recipes or #recipes == 0 then return nil, profName, currentSkill, currentSkill, 0 end
 
     targetStart = targetStart or currentSkill
     targetEnd = targetEnd or pMaxSkill
-    if targetStart >= targetEnd then return nil, profName, currentSkill end
+    L.Print(string.format("计算路线: %d -> %d (%s)", targetStart, targetEnd, tostring(profName)))
+    if targetStart >= targetEnd then 
+        L.Print("错误: 起点等级已大于或等于终点等级。")
+        return nil, profName, targetStart, targetEnd, 0 
+    end
     
     -- DP array storing min cost to reach a specific skill point
     local dp = {}
@@ -241,11 +245,11 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         local allowed = true
         if not rec.isKnown then
             local db = ProfLevelHelperDB
-            if rec.acqSource == "训练师学习" and not db.IncludeSourceTrainer then allowed = false end
-            if rec.acqSource == "拍卖行购买" and not db.IncludeSourceAH then allowed = false end
-            if rec.acqSource == "NPC 购买" and not db.IncludeSourceVendor then allowed = false end
-            if rec.acqSource:match("任务") and not db.IncludeSourceQuest then allowed = false end
-            if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and not db.IncludeSourceUnknown then allowed = false end
+            if rec.acqSource == "训练师学习" and db.IncludeSourceTrainer == false then allowed = false end
+            if rec.acqSource == "拍卖行购买" and db.IncludeSourceAH == false then allowed = false end
+            if rec.acqSource == "NPC 购买" and db.IncludeSourceVendor == false then allowed = false end
+            if rec.acqSource:match("任务") and db.IncludeSourceQuest == false then allowed = false end
+            if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and db.IncludeSourceUnknown == false then allowed = false end
         end
         
         if allowed then
@@ -253,6 +257,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         end
     end
     recipes = filteredRecipes
+    L.Print("过滤后可用配方数量: " .. #recipes)
     
     -- Find shortest path using Bellman-Ford like DP logic across skill levels
     for currentPoint = targetStart, targetEnd - 1 do
@@ -318,7 +323,12 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     end
     
     if dp[targetEnd] >= 99999999999 then
-        return nil, profName, currentSkill -- Unreachable (no recipes available to push further)
+        local maxReached = targetStart
+        for s = targetStart, targetEnd do
+            if dp[s] < 99999999999 then maxReached = s end
+        end
+        L.Print(string.format("错误: 算法在等级 %d 处中断，无法到达 %d。请检查此时是否缺少可用的后续配方。", maxReached, targetEnd))
+        return nil, profName, targetStart, targetEnd, 0 -- Unreachable
     end
     
     -- Reconstruct the route by backtracking
