@@ -84,7 +84,7 @@ function L.GetRecipeList(includeHoliday)
                         end
                     end
                 end
-                return list, profName, currentSkill
+                return list, profName, currentSkill, maxSkill or 450
             end
         end
     end
@@ -115,11 +115,42 @@ function L.GetRecipeList(includeHoliday)
             end
         end
     end
-    return list, profName, currentSkill
+    return list, profName, currentSkill, maxSkill or 450
 end
 
--- Placeholder: mark holiday/seasonal recipes.
+local HOLIDAY_RECIPES = {
+    -- 感恩节 (Pilgrim's Bounty)
+    ["香料面包布丁"] = true,
+    ["南瓜馅饼"] = true,
+    ["酸果蔓酱"] = true,
+    ["蜜汁薯块"] = true,
+    ["慢烤火鸡"] = true,
+    ["玉米馅料"] = true,
+    ["糖心甜土豆"] = true,
+    ["Spice Bread Stuffing"] = true,
+    ["Pumpkin Pie"] = true,
+    ["Cranberry Chutney"] = true,
+    ["Candied Sweet Potato"] = true,
+    ["Slow-Roasted Turkey"] = true,
+    -- 冬幕节 (Winter Veil)
+    ["蛋奶酒"] = true,
+    ["小姜饼"] = true,
+    ["热苹果酒"] = true,
+    ["冬天爷爷的手套"] = true,
+    ["寒冬之刃"] = true,
+    ["寒冬之力"] = true,
+    ["绿色节日衬衣"] = true,
+    ["Egg Nog"] = true,
+    ["Gingerbread Cookie"] = true,
+    ["Hot Apple Cider"] = true,
+}
+
+-- Check if recipe is a holiday/seasonal recipe.
 function L.IsHolidayRecipe(recipeName, profName)
+    if not recipeName then return false end
+    if HOLIDAY_RECIPES[recipeName] then return true end
+    -- Just in case someone puts the event name in recipe name
+    if recipeName:match("感恩节") or recipeName:match("冬幕节") then return true end
     return false
 end
 
@@ -131,14 +162,14 @@ function L.GetRecipeThresholds(recipeName, profName, currentSkill)
         return data.yellow, data.gray
     end
     local _, _, maxSkill = L.GetCurrentProfessionSkill()
-    maxSkill = maxSkill or 300
+    maxSkill = maxSkill or 450
     currentSkill = currentSkill or 0
     local yellow = currentSkill + 5
     local gray = math.min(maxSkill, currentSkill + 30)
     return yellow, gray
 end
 
--- Cost per one craft: materials (from AH or vendor) + recipe acquisition (once per recipe).
+-- Cost per one craft: materials (from AH or vendor).
 function L.CraftCost(reagents)
     local cost = 0
     for _, r in ipairs(reagents or {}) do
@@ -175,56 +206,179 @@ function L.GetItemPrice(itemNameOrLinkOrId)
     return 0 -- Failed to calculate
 end
 
--- Build leveling table
-function L.BuildLevelingTable(includeHoliday)
-    local recipes, profName, currentSkill = L.GetRecipeList(includeHoliday)
+-- Calculate global cheapest route using Dynamic Programming (Shortest Path)
+function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
+    local recipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
     if not recipes or #recipes == 0 then return nil, profName, currentSkill end
 
-    local result = {}
+    targetStart = targetStart or currentSkill
+    targetEnd = targetEnd or pMaxSkill
+    if targetStart >= targetEnd then return nil, profName, currentSkill end
+    
+    -- DP array storing min cost to reach a specific skill point
+    local dp = {}
+    local path = {} -- path[skill] = { prevSkill = S, cost = C, recipe = R, crafts = N, matCost = M, recCost = RC }
+    
+    for s = targetStart, targetEnd do
+        dp[s] = 99999999999 -- effectively infinity
+    end
+    dp[targetStart] = 0
+    
+    -- Pre-calculate material and acquisition costs to save time, and apply source filters
+    local filteredRecipes = {}
     for _, rec in ipairs(recipes) do
-        local canProcess = true
-        if rec.learn and currentSkill < rec.learn then 
-            canProcess = false 
+        rec.matCost = L.CraftCost(rec.reagents)
+        -- Trainer cost discount handles 0.9 inside RecipeCost if we had reputation logic, 
+        -- but here user requested a flat 0.9 reputation discount for trainers.
+        local rCost, rSource = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
+        rCost = rCost or 0
+        if rec.isTrainer and rCost > 0 and rCost == rec.trainPrice then
+            rCost = math.floor(rCost * 0.9)
         end
-
-        if canProcess then
-            local yellow, gray = rec.yellow, rec.grey
-            if not yellow or not gray then
-                yellow, gray = L.GetRecipeThresholds(rec.name, profName, currentSkill)
-            end
-            
-            local chance = L.CalcSkillUpChance(gray, yellow, currentSkill)
-            if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
-                if rec.skillType == "optimal" then chance = 1
-                elseif rec.skillType == "easy" then chance = 0.6
-                elseif rec.skillType == "medium" then chance = 0.3
+        rec.acqCost = rCost
+        rec.acqSource = rSource or "未知来源"
+        
+        local allowed = true
+        if not rec.isKnown then
+            local db = ProfLevelHelperDB
+            if rec.acqSource == "训练师学习" and not db.IncludeSourceTrainer then allowed = false end
+            if rec.acqSource == "拍卖行购买" and not db.IncludeSourceAH then allowed = false end
+            if rec.acqSource == "NPC 购买" and not db.IncludeSourceVendor then allowed = false end
+            if rec.acqSource:match("任务") and not db.IncludeSourceQuest then allowed = false end
+            if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and not db.IncludeSourceUnknown then allowed = false end
+        end
+        
+        if allowed then
+            table.insert(filteredRecipes, rec)
+        end
+    end
+    recipes = filteredRecipes
+    
+    -- Find shortest path using Bellman-Ford like DP logic across skill levels
+    for currentPoint = targetStart, targetEnd - 1 do
+        if dp[currentPoint] < 99999999999 then
+            -- We track which recipes have had their acquisition cost paid in this DP branch.
+            -- A true Dijkstra with full state would require a bitmask of learned recipes, which is too huge.
+            -- Heuristic: Assume the user buys the recipe exactly once when they craft it for the first time *in this step*.
+            for _, rec in ipairs(recipes) do
+                local learnSkill = rec.learn or 1
+                local yellow, gray = rec.yellow, rec.grey
+                if not yellow or not gray then
+                    yellow, gray = L.GetRecipeThresholds(rec.name, profName, currentPoint)
                 end
-            end
-            if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
-            
-            if chance > 0 then
-                local recipeCost = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
-                if rec.isKnown or recipeCost ~= nil then
-                    local matCost = L.CraftCost(rec.reagents)
-                    local totalPerCraft = matCost
-                    local expectedCrafts = chance > 0 and (1 / chance) or 999
-                    local costPerSkillPoint = totalPerCraft * expectedCrafts
-                    costPerSkillPoint = costPerSkillPoint + (recipeCost or 0)
-
-                    result[#result + 1] = {
-                        name = rec.name,
-                        index = rec.index,
-                        chance = chance,
-                        matCost = matCost,
-                        recipeCost = recipeCost or 0,
-                        costPerSkillPoint = costPerSkillPoint,
-                        reagents = rec.reagents,
-                        isKnown = rec.isKnown,
-                    }
+                
+                -- Check if we can craft it at all at 'currentPoint'
+                if currentPoint >= learnSkill and currentPoint < gray then
+                    local chance = L.CalcSkillUpChance(gray, yellow, currentPoint)
+                    if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
+                        if rec.skillType == "optimal" then chance = 1
+                        elseif rec.skillType == "easy" then chance = 0.6
+                        elseif rec.skillType == "medium" then chance = 0.3
+                        end
+                    end
+                    if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
+                    
+                    if chance > 0 then
+                        -- Expected crafts to gain 1 skill point
+                        local expectedCrafts = 1 / chance
+                        local stepCost = rec.matCost * expectedCrafts
+                        
+                        -- If the recipe from the previous step is different, we add the acquisition cost. 
+                        -- It's an approximation but avoids exponential state complexity.
+                        local isNewRecipe = true
+                        if path[currentPoint] and path[currentPoint].recipe.name == rec.name then
+                            isNewRecipe = false
+                        end
+                        
+                        local additionalRecCost = 0
+                        local recSource = rec.acqSource
+                        if isNewRecipe and not rec.isKnown then
+                            additionalRecCost = rec.acqCost
+                        end
+                        
+                        local nextPoint = currentPoint + 1
+                        local newTotalCost = dp[currentPoint] + stepCost + additionalRecCost
+                        
+                        if newTotalCost < dp[nextPoint] then
+                            dp[nextPoint] = newTotalCost
+                            path[nextPoint] = {
+                                prevSkill = currentPoint,
+                                stepTotalCost = stepCost + additionalRecCost,
+                                recipe = rec,
+                                crafts = expectedCrafts,
+                                matCost = stepCost,
+                                recCost = additionalRecCost,
+                                recSource = recSource
+                            }
+                        end
+                    end
                 end
             end
         end
     end
-    table.sort(result, function(a, b) return (a.costPerSkillPoint or 999999) < (b.costPerSkillPoint or 999999) end)
-    return result, profName, currentSkill
+    
+    if dp[targetEnd] >= 99999999999 then
+        return nil, profName, currentSkill -- Unreachable (no recipes available to push further)
+    end
+    
+    -- Reconstruct the route by backtracking
+    local route = {}
+    local curr = targetEnd
+    while curr > targetStart do
+        local step = path[curr]
+        if not step then break end
+        table.insert(route, 1, {
+            skillReached = curr,
+            prevSkill = step.prevSkill,
+            recipe = step.recipe,
+            crafts = step.crafts,
+            matCost = step.matCost,
+            recCost = step.recCost,
+            recSource = step.recSource,
+            stepTotalCost = step.stepTotalCost
+        })
+        curr = step.prevSkill
+    end
+    
+    -- Consolidate contiguous steps using the same recipe into larger segments
+    local consolidatedRoute = {}
+    local currentSegment = nil
+    
+    for i, step in ipairs(route) do
+        if not currentSegment then
+            currentSegment = {
+                startSkill = step.prevSkill,
+                endSkill = step.skillReached,
+                recipe = step.recipe,
+                totalCrafts = step.crafts,
+                totalMatCost = step.matCost,
+                totalRecCost = step.recCost,
+                recSource = step.recSource,
+                segmentTotalCost = step.stepTotalCost
+            }
+        elseif currentSegment.recipe.name == step.recipe.name then
+            currentSegment.endSkill = step.skillReached
+            currentSegment.totalCrafts = currentSegment.totalCrafts + step.crafts
+            currentSegment.totalMatCost = currentSegment.totalMatCost + step.matCost
+            currentSegment.totalRecCost = currentSegment.totalRecCost + step.recCost
+            currentSegment.segmentTotalCost = currentSegment.segmentTotalCost + step.stepTotalCost
+        else
+            table.insert(consolidatedRoute, currentSegment)
+            currentSegment = {
+                startSkill = step.prevSkill,
+                endSkill = step.skillReached,
+                recipe = step.recipe,
+                totalCrafts = step.crafts,
+                totalMatCost = step.matCost,
+                totalRecCost = step.recCost,
+                recSource = step.recSource,
+                segmentTotalCost = step.stepTotalCost
+            }
+        end
+    end
+    if currentSegment then
+        table.insert(consolidatedRoute, currentSegment)
+    end
+    
+    return consolidatedRoute, profName, targetStart, targetEnd, dp[targetEnd]
 end

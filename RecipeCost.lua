@@ -23,19 +23,23 @@ local function GetRecipeSpellID(recipeLink)
 end
 
 function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
-    if not rec then return nil end
-    if rec.isKnown then return 0 end
+    if not rec then return nil, nil end
+    if rec.isKnown then return 0, "已学习" end
     
     -- Fallback for native API
-    if rec.index and ProfLevelHelper.PlayerKnowsRecipe(rec.index) then return 0 end
+    if rec.index and ProfLevelHelper.PlayerKnowsRecipe(rec.index) then return 0, "已学习" end
 
     local db = ProfLevelHelperDB
     local cost = nil
+    local source = "未知来源"
 
     local function checkPrice(id)
         if not id then return end
         if db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0 then
-            cost = (cost == nil or db.AHPrices[id] < cost) and db.AHPrices[id] or cost
+            if cost == nil or db.AHPrices[id] < cost then
+                cost = db.AHPrices[id]
+                source = "拍卖行购买"
+            end
         end
         local vendorPrice = db.VendorPrices and db.VendorPrices[id]
         if not vendorPrice and GetItemInfo then
@@ -43,7 +47,10 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
             if vp and vp > 0 then vendorPrice = vp * 4 end
         end
         if vendorPrice and vendorPrice > 0 then
-            cost = (cost == nil or vendorPrice < cost) and vendorPrice or cost
+            if cost == nil or vendorPrice < cost then
+                cost = vendorPrice
+                source = "NPC 购买"
+            end
         end
     end
 
@@ -56,17 +63,27 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
     end
 
     if rec.isTrainer and rec.trainPrice and rec.trainPrice >= 0 then
-        cost = (cost == nil or rec.trainPrice < cost) and rec.trainPrice or cost
+        if cost == nil or rec.trainPrice < cost then
+            cost = rec.trainPrice
+            source = "训练师学习"
+        end
     end
 
     local spellID = (rec.recipeLink and GetRecipeSpellID(rec.recipeLink)) or rec.sid
     local name = rec.name
     local trainerCost = db.TrainerCosts and (db.TrainerCosts[spellID or name] or db.TrainerCosts[name])
     if trainerCost and trainerCost >= 0 then
-        cost = (cost == nil or trainerCost < cost) and trainerCost or cost
+        if cost == nil or trainerCost < cost then
+            cost = trainerCost
+            source = "训练师学习"
+        end
     end
 
-    return cost
+    if cost == nil and (rec.recipeItemIDs or rec.recipeLink) then
+        source = "需打怪或购买(价格未知)"
+    end
+
+    return cost, source
 end
 
 function ProfLevelHelper.RecordVendorPrices()

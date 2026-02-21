@@ -14,6 +14,13 @@ ProfLevelHelperDB = ProfLevelHelperDB or {
     TrainerCosts = {},       -- [spellID or recipeName] = cost (copper), optional
     IncludeHolidayRecipes = false,
     scanPerFrame = 100,      -- AH scan: items per batch (50-200, like EasyAuction)
+    TargetSkillStart = 1,
+    TargetSkillEnd = 350,
+    IncludeSourceTrainer = true,
+    IncludeSourceAH = true,
+    IncludeSourceVendor = false,
+    IncludeSourceQuest = false,
+    IncludeSourceUnknown = false,
 }
 
 function L.Print(msg)

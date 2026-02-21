@@ -130,7 +130,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 150)
+    f:SetSize(320, 340)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     f:SetBackdrop({
@@ -148,13 +148,13 @@ function L.OpenOptions()
 
     local title = f.title or f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16)
-    title:SetText("ProfLevelHelper")
+    title:SetText("ProfLevelHelper (设置选项)")
     f.title = title
 
     local scanBtn = f.scanBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    scanBtn:SetSize(100, 22)
+    scanBtn:SetSize(120, 22)
     scanBtn:SetPoint("TOPLEFT", 24, -40)
-    scanBtn:SetText("扫描拍卖行")
+    scanBtn:SetText("全量扫描拍卖行")
     scanBtn:SetScript("OnClick", function()
         if L.AHScanRunning then return end
         L.ScanAH()
@@ -167,12 +167,78 @@ function L.OpenOptions()
     cb:SetChecked(ProfLevelHelperDB.IncludeHolidayRecipes)
     cb:SetScript("OnClick", function()
         ProfLevelHelperDB.IncludeHolidayRecipes = cb:GetChecked()
+        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
     end)
     f.checkHoliday = cb
     local cbLabel = cb.label or cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     cbLabel:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-    cbLabel:SetText("计算时包含节日/季节性配方")
+    cbLabel:SetText("规划路线时包含节日配方")
     cb.label = cbLabel
+
+    -- Input Start
+    local startLabel = f.startLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    startLabel:SetPoint("TOPLEFT", 24, -110)
+    startLabel:SetText("规划起点 (当前等级):")
+    f.startLabel = startLabel
+    local startInput = f.startInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    startInput:SetSize(40, 20)
+    startInput:SetPoint("LEFT", startLabel, "RIGHT", 10, 0)
+    startInput:SetAutoFocus(false)
+    startInput:SetNumeric(true)
+    startInput:SetText(tostring(ProfLevelHelperDB.TargetSkillStart or 1))
+    startInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val then 
+            ProfLevelHelperDB.TargetSkillStart = val 
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end
+    end)
+    f.startInput = startInput
+
+    -- Input End
+    local endLabel = f.endLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    endLabel:SetPoint("TOPLEFT", 24, -140)
+    endLabel:SetText("规划终点 (目标满级):")
+    f.endLabel = endLabel
+    local endInput = f.endInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    endInput:SetSize(40, 20)
+    endInput:SetPoint("LEFT", endLabel, "RIGHT", 10, 0)
+    endInput:SetAutoFocus(false)
+    endInput:SetNumeric(true)
+    endInput:SetText(tostring(ProfLevelHelperDB.TargetSkillEnd or 450))
+    endInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val then 
+            ProfLevelHelperDB.TargetSkillEnd = val 
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end
+    end)
+    f.endInput = endInput
+
+    -- Source Filters
+    local yOfs = -170
+    local function createCheckbox(key, text)
+        local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", 24, yOfs)
+        if ProfLevelHelperDB[key] == nil then ProfLevelHelperDB[key] = false end
+        cb:SetChecked(ProfLevelHelperDB[key])
+        cb:SetScript("OnClick", function()
+            ProfLevelHelperDB[key] = cb:GetChecked()
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end)
+        f["cb_"..key] = cb
+        local cbLabel = cb.label or cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        cbLabel:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        cbLabel:SetText(text)
+        cb.label = cbLabel
+        yOfs = yOfs - 25
+    end
+
+    createCheckbox("IncludeSourceTrainer", "包含训练师图纸")
+    createCheckbox("IncludeSourceAH", "包含拍卖行图纸")
+    createCheckbox("IncludeSourceVendor", "包含NPC出售图纸")
+    createCheckbox("IncludeSourceQuest", "包含任务奖励图纸")
+    createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
 
     local close = f.closeBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     close:SetSize(100, 22)
@@ -187,82 +253,172 @@ end
 
 function L.ShowResultList()
     local includeHoliday = ProfLevelHelperDB.IncludeHolidayRecipes
-    local result, profName, currentSkill = L.BuildLevelingTable(includeHoliday)
-    if not result or #result == 0 then
-        L.Print(profName and ("在技能点 " .. tostring(currentSkill) .. " 下没有可用于冲 "..profName.." 的配方。") or "请先打开专业技能窗口。")
+    
+    local _, pCurr, pMax = L.GetCurrentProfessionSkill()
+    local startSkill = ProfLevelHelperDB.TargetSkillStart or pCurr or 1
+    local endSkill = ProfLevelHelperDB.TargetSkillEnd or pMax or 350
+    
+    local route, profName, actualStart, actualEnd, totalCost = L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
+    if not route or #route == 0 then
+        L.Print(profName and ("无法找到一条从 " .. actualStart .. " 到 ".. actualEnd .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
         return
     end
 
-    if L.ResultFrame and L.ResultFrame:IsShown() then
-        L.ResultFrame:Hide()
-        return
+    if not ProfLevelHelperDB.AHPrices or next(ProfLevelHelperDB.AHPrices) == nil then
+        L.Print("|cffff2222警告：尚未扫描拍卖行物价，所有的消耗计算可能存在极大的误差（按 NPC 售出价格预估），请尽快去主城拍卖行点击扫描一次！|r")
     end
 
-    local f = L.ResultFrame or CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
-    L.ResultFrame = f
-    f:SetSize(460, 380)
-    f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG")
-    f:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-    f:SetBackdropColor(0, 0, 0, 0.9)
-    f:EnableMouse(true)
-    f:SetMovable(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    if not L.ResultFrame then
+        local f = CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
+        L.ResultFrame = f
+        f:SetSize(600, 480)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        f:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 0.9)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
 
-    local title = f.title or f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOP", 0, -12)
-    title:SetText(profName and (profName .. " (当前熟练度 " .. tostring(currentSkill) .. ") - 推荐充点方案") or "推荐列表")
-    f.title = title
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -12)
+        f.title = title
 
-    local scroll = f.scroll or CreateFrame("ScrollFrame", "ProfLevelHelperResultScroll", f, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 20, -36)
-    scroll:SetPoint("BOTTOMRIGHT", -36, 36)
-    f.scroll = scroll
+        local scroll = CreateFrame("ScrollFrame", "ProfLevelHelperResultScroll", f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 20, -36)
+        scroll:SetPoint("BOTTOMRIGHT", -36, 46) -- give bottom room for buttons
+        f.scroll = scroll
 
-    local content = f.content or CreateFrame("Frame", nil, scroll)
-    content:SetSize(scroll:GetWidth() - 20, 1)
-    scroll:SetScrollChild(content)
-    f.content = content
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(scroll:GetWidth() - 20, 1)
+        scroll:SetScrollChild(content)
+        f.content = content
+        
+        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        close:SetSize(100, 22)
+        close:SetPoint("BOTTOMRIGHT", -20, 12)
+        close:SetText("关闭")
+        close:SetScript("OnClick", function() f:Hide() end)
+        f.closeBtn = close
+
+        local optionsBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        optionsBtn:SetSize(100, 22)
+        optionsBtn:SetPoint("BOTTOMLEFT", 20, 12)
+        optionsBtn:SetText("更改选项")
+        optionsBtn:SetScript("OnClick", function() L.OpenOptions() end)
+        f.optionsBtn = optionsBtn
+    end
+
+    local f = L.ResultFrame
 
     local function CopperToGold(c)
-        if not c or c == 0 then return "0 铜" end
+        if type(c) ~= "number" or c == 0 then return "0 铜" end
         local g = math.floor(c / 10000)
         local s = math.floor((c % 10000) / 100)
-        local co = c % 100
-        if g > 0 then return g .. "金" .. s .. "银" .. co .. "铜"
-        elseif s > 0 then return s .. "银" .. co .. "铜"
-        else return co .. "铜" end
+        local co = math.floor(c % 100)
+        local str = ""
+        if g > 0 then str = str .. "|cffffdf00" .. g .. "金|r " end
+        if s > 0 or g > 0 then str = str .. "|cffc0c0c0" .. s .. "银|r " end
+        str = str .. "|cffb87333" .. co .. "铜|r"
+        return str
     end
 
+    f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测花费 " .. CopperToGold(totalCost) .. ")") or "推荐列表")
+    local content = f.content
+    local scroll = f.scroll
+
+    -- Clear old lines if exist
+    if content.lines then
+        for _, g in ipairs(content.lines) do
+            g:Hide()
+        end
+    end
+    content.lines = {}
+
     local y = 0
-    local lineHeight = 18
-    for i = 1, math.min(#result, 50) do
-        local r = result[i]
-        local line = content.lines and content.lines[i] or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        if not content.lines then content.lines = {} end
-        content.lines[i] = line
+    for i, seg in ipairs(route) do
+        local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        table.insert(content.lines, line)
         line:SetPoint("TOPLEFT", 0, -y)
         line:SetJustifyH("LEFT")
-        line:SetText(("%d. %s  | 成功率 %.0f%%  | 单点成本: %s  (单份花费: %s)"):format(
-            i, r.name or "?", (r.chance or 0) * 100, CopperToGold(r.costPerSkillPoint), CopperToGold(r.recipeCost)))
+        
+        -- Build Reagents string
+        local reqStr = ""
+        local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+        for _, r in ipairs(seg.recipe.reagents or {}) do
+            local itemName = r.name
+            if not itemName and r.itemID then
+                if alaAgent and alaAgent.item_name then
+                    itemName = alaAgent.item_name(r.itemID)
+                end
+                if not itemName then
+                    local iname = GetItemInfo(r.itemID)
+                    if iname then itemName = iname end
+                end
+            end
+            if not itemName then
+                itemName = "ID:" .. tostring(r.itemID)
+            end
+            
+            local totQty = math.ceil(r.count * seg.totalCrafts)
+            reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+        end
+        if reqStr == "" then reqStr = "无或由材料制成" end
+
+        local rNameC = seg.recipe.name or "?"
+        if not seg.recipe.isKnown then 
+            rNameC = "|cffff2222[未学]|r" .. rNameC .. " |cff888888(获取: " .. (seg.recSource or "未知") .. ")|r"
+        else 
+            rNameC = "|cff22ff22[已学]|r" .. rNameC 
+        end
+
+        line:SetText(("[%d - %d]: %s (预计制造约 %.0f 次) |造价 %s\n - 消耗材料: %s"):format(
+            seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, CopperToGold(seg.segmentTotalCost), reqStr))
         line:SetWidth(scroll:GetWidth() - 24)
-        y = y + lineHeight
+        line:Show()
+        
+        local currentHeight = line:GetStringHeight()
+        if not currentHeight or currentHeight == 0 then currentHeight = 38 end
+        y = y + currentHeight + 16
     end
     content:SetHeight(y)
 
-    local close = f.closeBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    close:SetSize(100, 22)
-    close:SetPoint("BOTTOM", 0, 12)
-    close:SetText("关闭")
-    close:SetScript("OnClick", function() f:Hide() end)
-    f.closeBtn = close
-
     f:Show()
+end
+
+-- Inject hook button into Blizzard_TradeSkillUI when it loads.
+local function CreateTradeSkillButton()
+    if not TradeSkillFrame or L.TradeSkillButton then return end
+    local btn = CreateFrame("Button", "ProfLevelHelperTradeSkillBtn", TradeSkillFrame, "UIPanelButtonTemplate")
+    L.TradeSkillButton = btn
+    btn:SetSize(90, 22)
+    btn:SetPoint("TOPRIGHT", TradeSkillFrame, "TOPRIGHT", -40, -40)
+    btn:SetText("冲点助手")
+    btn:SetScript("OnClick", function()
+        L.ShowResultList()
+    end)
+    if alaTradeSkillFrame then
+        -- if alaTradeSkill is hooked securely, reposition slightly so we don't overlap their buttons.
+        btn:SetPoint("TOPRIGHT", TradeSkillFrame, "TOPRIGHT", -150, -40)
+    end
+end
+
+if IsAddOnLoaded("Blizzard_TradeSkillUI") then
+    CreateTradeSkillButton()
+else
+    local initFrame = CreateFrame("Frame")
+    initFrame:RegisterEvent("ADDON_LOADED")
+    initFrame:SetScript("OnEvent", function(self, event, addonName)
+        if addonName == "Blizzard_TradeSkillUI" then
+            CreateTradeSkillButton()
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+    end)
 end
