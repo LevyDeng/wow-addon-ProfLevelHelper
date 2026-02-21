@@ -54,5 +54,6 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
         L.Print("  scan   - Scan auction house (run at AH)")
         L.Print("  list   - Show cheapest leveling list for current profession (open profession first)")
         L.Print("  options - Toggle holiday recipes and open settings")
+        L.Print("Feedback: ptrees@126.com")
     end
 end

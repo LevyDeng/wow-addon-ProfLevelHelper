@@ -37,6 +37,6 @@ Profession leveling assistant for WoW Classic (Titan). Helps you choose the chea
 For accurate skill-up chance, you can add static data:  
 `ProfLevelHelper.RecipeThresholds[professionName][recipeName] = { yellow = N, gray = N }` in `RecipeCost.lua` or a separate data file. Without this, the addon uses the skillType fallback (optimal / easy / medium / trivial).
 
-## Interface
+## Feedback & Contact
 
-30405 (Titan Classic). Requires profession and auction UIs (Blizzard_TradeSkillUI loaded on demand).
+If you have any feedback or suggestions, feel free to contact me via email: [ptrees@126.com](mailto:ptrees@126.com)

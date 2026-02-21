@@ -242,6 +242,11 @@ function L.OpenOptions()
     createCheckbox("IncludeSourceQuest", "包含任务奖励图纸")
     createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
 
+    local feedback = f.feedbackText or f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    feedback:SetPoint("BOTTOM", 0, 42)
+    feedback:SetText("反馈邮箱: ptrees@126.com")
+    f.feedbackText = feedback
+
     local close = f.closeBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     close:SetSize(100, 22)
     close:SetPoint("BOTTOM", 0, 16)

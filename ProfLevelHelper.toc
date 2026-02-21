@@ -2,6 +2,7 @@
 ## Title: ProfLevelHelper
 ## Notes: Profession leveling assistant - AH scan, recipe cost (trainer/vendor/AH), cheapest path.
 ## Author: ProfLevelHelper
+## X-Email: ptrees@126.com
 ## Version: 1.0.0
 ## DefaultState: Enabled
 ## SavedVariables: ProfLevelHelperDB
