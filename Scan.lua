@@ -1,33 +1,59 @@
 --[[
   AH scan: store min price per itemID in ProfLevelHelperDB.AHPrices.
-  Pattern follows EasyAuction: one-shot AUCTION_ITEM_LIST_UPDATE, batch processing with
-  delay between chunks (scanPerFrame items, then C_Timer.After(0.05) next chunk), 5s fallback.
-  Vendor scan: record vendor prices when at merchant (RecipeCost.RecordVendorPrices).
+  Improved to mimic EasyAuction: uses a confirmation dialog, small chunk sizes, 
+  and asynchronous item loading via Item:ContinueOnItemLoad to prevent skips and client freezes.
 ]]
 
 local L = ProfLevelHelper
 
 L.AHScanRunning = false
-local CHUNK_SIZE = 100  -- items per batch; 50-200 recommended (EasyAuction uses 50-200)
-local BATCH_DELAY = 0.05  -- seconds between chunks to keep UI responsive
+local CHUNK_SIZE = 50 
+local BATCH_DELAY = 0.05
+
+local waitingItems = {}
+local processedIndexes = {}
+local globalUpdatedCount = 0
+
+StaticPopupDialogs["PROFLEVELHELPER_SCAN_CONFIRM"] = {
+    text = "|cffff2020警告！|r\n\n本操作将自动全量扫描拍卖行所有物品！\n\n在扫描开始期间（向服务器请求完整数据列表时），游戏画面会发生短暂冻结，这是魔兽世界引擎的正常现象。\n\n此操作可能耗时数秒到十几秒，请确认你已准备好开始扫描。",
+    button1 = "继续",
+    button2 = "取消",
+    OnAccept = function()
+        L.StartAHScan()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
 
 function L.ScanAH()
     if not CanSendAuctionQuery or not CanSendAuctionQuery() then
-        L.Print("Cannot query AH now. Open auction house and try again.")
+        L.Print("当前无法进行全量扫描，请打开拍卖行界面并重试。")
         return
     end
     if L.AHScanRunning then
-        L.Print("Scan already in progress.")
+        L.Print("扫描已经在进行中，请耐心等待完成。")
         return
     end
 
+    StaticPopup_Show("PROFLEVELHELPER_SCAN_CONFIRM")
+end
+
+function L.StartAHScan()
     local perFrame = ProfLevelHelperDB.scanPerFrame or CHUNK_SIZE
     if perFrame < 50 then perFrame = 50 elseif perFrame > 500 then perFrame = 200 end
 
     L.AHScanRunning = true
-    L.Print("AH scan started. Processing in batches...")
+    L.AHScanStartTime = GetTime()
+    L.ShowScanProgress()
+    L.UpdateScanButtonState("请求中...")
+    L.Print("拍卖行扫描已开始。正在发送请求...")
 
-    -- One-shot event: when list arrives, run processor exactly once (like EasyAuction).
+    waitingItems = {}
+    processedIndexes = {}
+    globalUpdatedCount = 0
+
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
     eventFrame:SetScript("OnEvent", function(self)
@@ -35,19 +61,19 @@ function L.ScanAH()
         if not L.AHScanRunning then return end
         local n = GetNumAuctionItems and GetNumAuctionItems("list") or 0
         if n > 0 then
-            ProcessChunk(1, 0, perFrame)
+            L.Print(string.format("收到服务器响应（共 %d 个物品），正在本地异步处理...", n))
+            L.ProcessChunk(0, perFrame)
         else
-            L.AHScanRunning = false
-            L.Print("AH scan done. No items in list.")
+            L.FinishScan()
+            L.Print("拍卖行扫描结束，当前拍卖行没有物品。")
         end
     end)
 
     local function doQuery()
-        -- getAll=true, exactMatch=true. Use 0/false for Classic compatibility.
         QueryAuctionItems("", 0, 0, 0, false, 0, true, true, nil)
     end
 
-    -- Ensure we are on Browse tab before query (EasyAuction does this).
+    -- Ensure we are on Browse tab before query (matches EasyAuction safe query approach)
     if AuctionFrame and AuctionFrame:IsShown() and AuctionFrameBrowse and not AuctionFrameBrowse:IsShown() then
         if AuctionFrameTab1 and AuctionFrameTab1.Click then
             AuctionFrameTab1:Click()
@@ -72,76 +98,151 @@ function L.ScanAH()
             local n = GetNumAuctionItems and GetNumAuctionItems("list") or 0
             if n > 0 then
                 eventFrame:UnregisterAllEvents()
-                ProcessChunk(1, 0, perFrame)
+                L.Print("触发超时保护，当前列表已有数据，强制进入处理队列...")
+                L.ProcessChunk(0, perFrame)
             else
-                L.AHScanRunning = false
-                L.Print("AH scan timed out. No data received.")
+                L.FinishScan()
+                L.Print("向服务器请求超时，未获取到任何拍卖数据。")
             end
         end)
     end
 end
 
--- Process one chunk of items; then schedule next chunk after BATCH_DELAY (like EasyAuction).
-function ProcessChunk(startIndex, totalUpdated, perFrame)
+local RETRY_DELAY = 1.0
+local RETRY_TIMEOUT = 10.0
+
+local function processItemData(i, itemId, name, count, buyout)
+    if not L.AHScanRunning then return false end
+    if not itemId or itemId <= 0 or not buyout or buyout <= 0 or not count or count <= 0 then return false end
+    
+    local db = ProfLevelHelperDB
+    db.AHPrices = db.AHPrices or {}
+    db.NameToID = db.NameToID or {}
+
+    if name and name ~= "" then db.NameToID[name] = itemId end
+    
+    local unitPrice = math.floor(buyout / count + 0.5)
+    local prev = db.AHPrices[itemId]
+    local updated = false
+    if not prev or unitPrice < prev then
+        db.AHPrices[itemId] = unitPrice
+        updated = true
+    end
+    processedIndexes[i] = true
+    return updated
+end
+
+function L.ProcessChunk(startIndex, perFrame)
     if not L.AHScanRunning or not GetNumAuctionItems then return end
     local num = GetNumAuctionItems("list")
     if num == 0 then
-        L.AHScanRunning = false
-        local db = ProfLevelHelperDB
-        L.Print("AH scan done. Total items: " .. (db.AHPrices and L.TableCount(db.AHPrices) or 0))
+        L.FinishScan()
+        return
+    end
+
+    -- Handle when we've reached the end of the base index iteration
+    if startIndex >= num then
+        local hasWaiting = false
+        local waitingCount = 0
+        for idx, _ in pairs(waitingItems) do
+            if not processedIndexes[idx] then
+                hasWaiting = true 
+                waitingCount = waitingCount + 1
+            end
+        end
+        
+        if hasWaiting then
+            L.UpdateScanProgress(num, num, GetTime() - (L.AHScanStartTime or GetTime()), string.format("等待异步物品缓存加速中... (%d 当前未加载)", waitingCount))
+            C_Timer.After(0.5, function()
+                if L.AHScanRunning then L.ProcessChunk(startIndex, perFrame) end
+            end)
+            return
+        end
+        
+        -- Fully completed
+        L.FinishScan()
         return
     end
 
     perFrame = perFrame or CHUNK_SIZE
-    local db = ProfLevelHelperDB
-    db.AHPrices = db.AHPrices or {}
-    db.NameToID = db.NameToID or {}
-    local endIdx = math.min(startIndex + perFrame - 1, num)
-    local updated = totalUpdated or 0
+    local endIdx = math.min(startIndex + perFrame, num)
 
-    -- GetAuctionItemInfo return order (match EasyAuction): name, texture, count, ..., buyout(10th), ..., itemID(17th)
-    for i = startIndex, endIdx do
-        local name, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemId =
-            GetAuctionItemInfo("list", i)
-        if itemId and itemId > 0 then
-            if name and name ~= "" then db.NameToID[name] = itemId end
-            local price = (buyout and buyout > 0) and buyout or nil
-            if price and count and count > 0 then
-                local unitPrice = math.floor(price / count + 0.5)
-                local prev = db.AHPrices[itemId]
-                if not prev or unitPrice < prev then
-                    db.AHPrices[itemId] = unitPrice
-                    updated = updated + 1
+    -- GetAuctionItemInfo return order: name, texture, count, ..., buyout(10th), ..., itemID(17th)
+    for i = startIndex + 1, endIdx do
+        if not processedIndexes[i] then
+            local name, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemId = GetAuctionItemInfo("list", i)
+            local link = GetAuctionItemLink("list", i)
+            
+            if itemId and itemId > 0 and buyout and count and count > 0 then
+                local safeName = link and select(1, GetItemInfo(link)) or name
+                
+                if safeName and safeName ~= "" then
+                    -- Synchronous process success
+                    if processItemData(i, itemId, safeName, count, buyout) then
+                        globalUpdatedCount = globalUpdatedCount + 1
+                    end
+                else
+                    -- Asynchronous tracking needed
+                    if not waitingItems[i] then
+                        waitingItems[i] = {
+                            itemId = itemId, count = count, buyout = buyout, retry = 0, startTime = GetTime()
+                        }
+                        if Item and Item.CreateFromItemID then
+                            local item = Item:CreateFromItemID(itemId)
+                            item:ContinueOnItemLoad(function()
+                                C_Timer.After(0, function()
+                                    local ref = waitingItems[i]
+                                    if ref and L.AHScanRunning then
+                                        local loadedLink = GetAuctionItemLink("list", i)
+                                        local loadedName = loadedLink and select(1, GetItemInfo(loadedLink)) or name
+                                        if loadedName and loadedName ~= "" then
+                                            if processItemData(i, ref.itemId, loadedName, ref.count, ref.buyout) then
+                                                globalUpdatedCount = globalUpdatedCount + 1
+                                            end
+                                            waitingItems[i] = nil
+                                            processedIndexes[i] = true
+                                        end
+                                    end
+                                end)
+                            end)
+                        end
+                    end
                 end
+            else
+                -- Not a valid auction item, just skip
+                processedIndexes[i] = true
             end
         end
     end
+    
+    -- Cleanup strictly timed-out items that refuse to load
+    local now = GetTime()
+    for idx, ref in pairs(waitingItems) do
+        if not processedIndexes[idx] and (now - ref.startTime > RETRY_TIMEOUT) then
+            waitingItems[idx] = nil
+            processedIndexes[idx] = true
+        end
+    end
 
-    local nextStart = endIdx + 1
-    if nextStart <= num then
+    L.UpdateScanProgress(endIdx, num, GetTime() - (L.AHScanStartTime or GetTime()))
+
+    if endIdx <= num then
         if C_Timer and C_Timer.After then
             C_Timer.After(BATCH_DELAY, function()
                 if L.AHScanRunning then
-                    ProcessChunk(nextStart, updated, perFrame)
-                end
-            end)
-        else
-            local f = L.AHScanScanFrame or CreateFrame("Frame")
-            L.AHScanScanFrame = f
-            f.nextIndex = nextStart
-            f.updated = updated
-            f.perFrame = perFrame
-            f:SetScript("OnUpdate", function(frame)
-                frame:SetScript("OnUpdate", nil)
-                if L.AHScanRunning then
-                    ProcessChunk(frame.nextIndex, frame.updated, frame.perFrame)
+                    L.ProcessChunk(endIdx, perFrame)
                 end
             end)
         end
-    else
-        L.AHScanRunning = false
-        L.Print("AH scan done. " .. updated .. " prices updated. Total items: " .. L.TableCount(db.AHPrices))
     end
+end
+
+function L.FinishScan()
+    L.AHScanRunning = false
+    L.HideScanProgress()
+    L.UpdateScanButtonState()
+    local db = ProfLevelHelperDB
+    L.Print("全量扫描已经圆满结束！当前一共记录了 " .. L.TableCount(db.AHPrices) .. " 种物品的价格 (本次更新或新增: " .. globalUpdatedCount .. " 条记录)。")
 end
 
 function L.TableCount(t)
@@ -153,3 +254,4 @@ end
 function L.OnMerchantShow()
     ProfLevelHelper.RecordVendorPrices()
 end
+
