@@ -333,6 +333,20 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local filteredRecipes = {}
     for _, rec in ipairs(recipes) do
         rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
+        -- Sell-back value per item: max of vendor sell price and AH min sell price (we store lowest listing unit price).
+        rec.sellPricePerItem = 0
+        if rec.createdItemID then
+            local vendorPrice = 0
+            if GetItemInfo then
+                local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
+                if vp and vp > 0 then vendorPrice = vp end
+            end
+            local ahPrice = 0
+            if db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
+                ahPrice = db.AHPrices[rec.createdItemID]
+            end
+            rec.sellPricePerItem = (vendorPrice > ahPrice) and vendorPrice or ahPrice
+        end
         -- Trainer cost discount handles 0.9 inside RecipeCost if we had reputation logic, 
         -- but here user requested a flat 0.9 reputation discount for trainers.
         local rCost, rSource = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
@@ -414,8 +428,10 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     if chance > 0 then
                         -- Expected crafts to gain 1 skill point
                         local expectedCrafts = 1 / chance
-                        local stepCost = rec.matCost * expectedCrafts
-                        
+                        -- Net cost per craft = material cost minus sell-back value of created item(s)
+                        local netPerCraft = rec.matCost - (rec.sellPricePerItem or 0) * (rec.numMade or 1)
+                        local stepCost = netPerCraft * expectedCrafts
+
                         -- If the recipe from the previous step is different, we add the acquisition cost. 
                         -- It's an approximation but avoids exponential state complexity.
                         local isNewRecipe = true
