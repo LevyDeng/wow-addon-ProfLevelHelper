@@ -470,8 +470,11 @@ function L.ShowResultList()
             rNameC = "|cff22ff22[已学]|r" .. rNameC 
         end
 
-        line:SetText(("[%d - %d]: %s (预计制造约 %.0f 次) |造价 %s\n - 消耗材料: %s"):format(
-            seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, CopperToGold(seg.segmentTotalCost), reqStr))
+        line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作: %s | 回血(卖NPC: %s | AH: %s) | 净花费: %s\n  材料: %s"):format(
+            seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts,
+            CopperToGold(seg.totalRecCost or 0), CopperToGold(seg.totalMatCost or 0),
+            CopperToGold(seg.totalSellBackVendor or 0), CopperToGold(seg.totalSellBackAH or 0), CopperToGold(seg.segmentTotalCost or 0),
+            reqStr))
         line:SetWidth(scroll:GetWidth() - 24)
         line:Show()
         
@@ -576,13 +579,8 @@ function L.ShowExportFrame()
         if reqStr == "" then reqStr = "无或由材料制成" end
         
         local acq = seg.recSource and ("来源:"..seg.recSource) or ""
-        local segC = seg.segmentTotalCost or 0
-        local sg = math.floor(segC / 10000)
-        local ss = math.floor((segC % 10000) / 100)
-        local sco = math.floor(segC % 100)
-        local segCostStr = string.format("%d金 %d银 %d铜", sg, ss, sco)
-        
-        txt = txt .. string.format("[%d-%d] %s x%.0f次 | 花费: %s | (%s) - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, segCostStr, acq, reqStr)
+        local function c2s(c) local C = math.floor((c or 0) + 0.5); local g,s,co = math.floor(C/10000), math.floor((C%10000)/100), math.floor(C%100); return string.format("%d金%d银%d铜", g, s, co) end
+        txt = txt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作:%s 回血(卖NPC:%s AH:%s) 净花费:%s | %s - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(seg.totalMatCost), c2s(seg.totalSellBackVendor), c2s(seg.totalSellBackAH), c2s(seg.segmentTotalCost), acq, reqStr)
     end
     
     f.editBox:SetText(txt)

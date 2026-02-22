@@ -340,19 +340,17 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local filteredRecipes = {}
     for _, rec in ipairs(recipes) do
         rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
-        -- Sell-back value per item: max of vendor sell price and AH min sell price (we store lowest listing unit price).
+        -- Sell-back: vendor used for net cost; both stored so UI can show 卖NPC / AH.
         rec.sellPricePerItem = 0
+        rec.ahPricePerItem = 0
         if rec.createdItemID then
-            local vendorPrice = 0
             if GetItemInfo then
                 local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
-                if vp and vp > 0 then vendorPrice = vp end
+                if vp and vp > 0 then rec.sellPricePerItem = vp end
             end
-            local ahPrice = 0
             if db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
-                ahPrice = db.AHPrices[rec.createdItemID]
+                rec.ahPricePerItem = db.AHPrices[rec.createdItemID]
             end
-            rec.sellPricePerItem = (vendorPrice > ahPrice) and vendorPrice or ahPrice
         end
         -- Trainer cost discount handles 0.9 inside RecipeCost if we had reputation logic, 
         -- but here user requested a flat 0.9 reputation discount for trainers.
@@ -435,12 +433,14 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     if chance > 0 then
                         -- Expected crafts to gain 1 skill point
                         local expectedCrafts = 1 / chance
-                        -- Net cost per craft = material cost minus sell-back value of created item(s)
-                        local netPerCraft = rec.matCost - (rec.sellPricePerItem or 0) * (rec.numMade or 1)
-                        local stepCost = netPerCraft * expectedCrafts
+                        local matCostGross = rec.matCost * expectedCrafts
+                        local numMade = rec.numMade or 1
+                        local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
+                        local sellBackAH = (rec.ahPricePerItem or 0) * numMade * expectedCrafts
+                        local sellBack = sellBackVendor
+                        local stepCost = matCostGross - sellBack
 
-                        -- If the recipe from the previous step is different, we add the acquisition cost. 
-                        -- It's an approximation but avoids exponential state complexity.
+                        -- If the recipe from the previous step is different, we add the acquisition cost.
                         local isNewRecipe = true
                         if path[currentPoint] and path[currentPoint].recipe.name == rec.name then
                             isNewRecipe = false
@@ -462,7 +462,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                                 stepTotalCost = stepCost + additionalRecCost,
                                 recipe = rec,
                                 crafts = expectedCrafts,
-                                matCost = stepCost,
+                                matCost = matCostGross,
+                                sellBackVendor = sellBackVendor,
+                                sellBackAH = sellBackAH,
                                 recCost = additionalRecCost,
                                 recSource = recSource
                             }
@@ -494,7 +496,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             recipe = step.recipe,
             crafts = step.crafts,
             matCost = step.matCost,
-            recCost = step.recCost,
+            sellBackVendor = step.sellBackVendor or 0,
+            sellBackAH = step.sellBackAH or 0,
+            recCost = step.recCost or 0,
             recSource = step.recSource,
             stepTotalCost = step.stepTotalCost
         })
@@ -513,7 +517,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 recipe = step.recipe,
                 totalCrafts = step.crafts,
                 totalMatCost = step.matCost,
-                totalRecCost = step.recCost,
+                totalSellBackVendor = step.sellBackVendor or 0,
+                totalSellBackAH = step.sellBackAH or 0,
+                totalRecCost = step.recCost or 0,
                 recSource = step.recSource,
                 segmentTotalCost = step.stepTotalCost
             }
@@ -521,7 +527,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             currentSegment.endSkill = step.skillReached
             currentSegment.totalCrafts = currentSegment.totalCrafts + step.crafts
             currentSegment.totalMatCost = currentSegment.totalMatCost + step.matCost
-            currentSegment.totalRecCost = currentSegment.totalRecCost + step.recCost
+            currentSegment.totalSellBackVendor = currentSegment.totalSellBackVendor + (step.sellBackVendor or 0)
+            currentSegment.totalSellBackAH = currentSegment.totalSellBackAH + (step.sellBackAH or 0)
+            currentSegment.totalRecCost = currentSegment.totalRecCost + (step.recCost or 0)
             currentSegment.segmentTotalCost = currentSegment.segmentTotalCost + step.stepTotalCost
         else
             table.insert(consolidatedRoute, currentSegment)
@@ -531,7 +539,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 recipe = step.recipe,
                 totalCrafts = step.crafts,
                 totalMatCost = step.matCost,
-                totalRecCost = step.recCost,
+                totalSellBackVendor = step.sellBackVendor or 0,
+                totalSellBackAH = step.sellBackAH or 0,
+                totalRecCost = step.recCost or 0,
                 recSource = step.recSource,
                 segmentTotalCost = step.stepTotalCost
             }
