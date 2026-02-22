@@ -4,6 +4,18 @@
 
 local L = ProfLevelHelper
 
+function L.FormatAHScanTime()
+    local t = ProfLevelHelperDB and ProfLevelHelperDB.AHScanTime
+    if t and t > 0 then
+        if date then
+            local ok, s = pcall(date, "%Y-%m-%d %H:%M", t)
+            return ok and s or tostring(t)
+        end
+        return tostring(t)
+    end
+    return "Never"
+end
+
 -- Scan progress frame (shown during AH scan)
 function L.ShowScanProgress()
     local f = L.ScanProgressFrame
@@ -570,8 +582,12 @@ function L.ShowResultList()
             title:SetPoint("TOP", 0, -12)
             f.title = title
 
+            local ahTimeLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            ahTimeLabel:SetPoint("TOPLEFT", 20, -30)
+            f.ahTimeLabel = ahTimeLabel
+
             local scroll = CreateFrame("ScrollFrame", "ProfLevelHelperResultScroll", f, "UIPanelScrollFrameTemplate")
-            scroll:SetPoint("TOPLEFT", 20, -36)
+            scroll:SetPoint("TOPLEFT", 20, -44)
             scroll:SetPoint("BOTTOMRIGHT", -36, 46)
             f.scroll = scroll
 
@@ -620,6 +636,7 @@ function L.ShowResultList()
         end
 
         f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测花费 " .. CopperToGold(totalCost) .. ")") or "推荐列表")
+        f.ahTimeLabel:SetText("AH data updated: " .. L.FormatAHScanTime())
         local content = f.content
         local scroll = f.scroll
 
@@ -779,7 +796,8 @@ function L.ShowExportFrame()
     local co = math.floor(c % 100)
     local costStr = string.format("%d金 %d银 %d铜", g, s, co)
     
-    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计花费: %s\n\n", data.profName, data.startS, data.endS, costStr)
+    local ahTimeStr = L.FormatAHScanTime and L.FormatAHScanTime() or "Never"
+    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计花费: %s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, costStr, ahTimeStr)
     local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
 
     for _, seg in ipairs(data.route) do

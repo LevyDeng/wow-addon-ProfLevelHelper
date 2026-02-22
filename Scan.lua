@@ -306,11 +306,15 @@ function L.FinishScan()
         end
     end
     L.TempAHData = nil
-    
+
+    if GetServerTime then
+        db.AHScanTime = GetServerTime()
+    end
+
     L.AHScanRunning = false
     L.HideScanProgress()
     L.UpdateScanButtonState()
-    L.Print(string.format("全量扫描并结算圆满结束！当前记录了 %d 种物品的价格 (新增/更新: %d, 极低价过滤比例: %d%%)。", 
+    L.Print(string.format("全量扫描并结算圆满结束！当前记录了 %d 种物品的价格 (新增/更新: %d, 极低价过滤比例: %d%%)。",
         L.TableCount(db.AHPrices), globalUpdatedCount, math.floor((pct or 0) * 100)))
 end
 
