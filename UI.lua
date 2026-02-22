@@ -130,7 +130,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 400)
+    f:SetSize(320, 430)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -263,8 +263,27 @@ function L.OpenOptions()
     end)
     f.minQtyInput = minQtyInput
 
+    -- Titan Fragment: value per fragment (copper), default 8 silver
+    local fragLabel = f.fragLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    fragLabel:SetPoint("TOPLEFT", 24, -230)
+    fragLabel:SetText("泰坦碎片单价(铜):")
+    f.fragLabel = fragLabel
+    local fragInput = f.fragInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    fragInput:SetSize(60, 20)
+    fragInput:SetPoint("LEFT", fragLabel, "RIGHT", 10, 0)
+    fragInput:SetAutoFocus(false)
+    fragInput:SetNumeric(true)
+    fragInput:SetText(tostring(ProfLevelHelperDB.FragmentValueInCopper or 800))
+    fragInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val and val >= 0 then
+            ProfLevelHelperDB.FragmentValueInCopper = val
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end
+    end)
+    f.fragInput = fragInput
     -- Source Filters
-    local yOfs = -230
+    local yOfs = -260
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
@@ -578,6 +597,45 @@ local function CreateTradeSkillButton()
         -- if alaTradeSkill is hooked securely, reposition slightly so we don't overlap their buttons.
         btn:SetPoint("TOPRIGHT", TradeSkillFrame, "TOPRIGHT", -150, -40)
     end
+end
+
+-- Dev only: show FragmentCosts as Lua text for copying into FragmentCosts.lua. /plh dumpfragment
+function L.ShowFragmentDump()
+    local str = (ProfLevelHelper and ProfLevelHelper.ExportFragmentCostsToLuaString and ProfLevelHelper.ExportFragmentCostsToLuaString()) or "ProfLevelHelper_FragmentCosts = {\n}\n"
+    local f = L.FragmentDumpFrame
+    if not f then
+        f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        L.FragmentDumpFrame = f
+        f:SetSize(500, 400)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 32, insets = { left = 11, right = 12, top = 12, bottom = 11 } })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("Fragment data — copy and save as FragmentCosts.lua")
+        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        close:SetSize(80, 22)
+        close:SetPoint("BOTTOM", 0, 12)
+        close:SetText("Close")
+        close:SetScript("OnClick", function() f:Hide() end)
+        local eb = CreateFrame("EditBox", nil, f)
+        eb:SetPoint("TOPLEFT", 16, -36)
+        eb:SetPoint("BOTTOMRIGHT", -16, 40)
+        eb:SetMultiLine(true)
+        eb:SetAutoFocus(false)
+        eb:SetFontObject(GameFontHighlightSmall)
+        eb:SetScript("OnEscapePressed", function() f:Hide() end)
+        f.editBox = eb
+    end
+    f.editBox:SetText(str)
+    f.editBox:HighlightText(0, #str)
+    f:Show()
 end
 
 if IsAddOnLoaded("Blizzard_TradeSkillUI") then

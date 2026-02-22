@@ -7,6 +7,7 @@
 ## DefaultState: Enabled
 ## SavedVariables: ProfLevelHelperDB
 
+FragmentCosts.lua
 ProfLevelHelper.lua
 RecipeCost.lua
 Core.lua

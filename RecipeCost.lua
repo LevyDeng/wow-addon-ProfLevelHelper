@@ -105,3 +105,51 @@ function ProfLevelHelper.RecordVendorPrices()
         end
     end
 end
+
+-- Record Titan Fragment exchange: open the fragment vendor, then run /plh recordfragment.
+-- Uses GetMerchantItemCostItem when the merchant uses alternate currency (e.g. fragments).
+function ProfLevelHelper.RecordFragmentCosts()
+    if not GetMerchantNumItems then return end
+    local db = ProfLevelHelperDB
+    db.FragmentCosts = db.FragmentCosts or {}
+    local count = 0
+    for i = 1, GetMerchantNumItems() do
+        local link = GetMerchantItemLink(i)
+        if link then
+            local id = tonumber(link:match("item:(%d+)"))
+            if id then
+                local _, _, _, quantity = GetMerchantItemInfo(i)
+                quantity = (quantity and quantity > 0) and quantity or 1
+                -- Only record when the item is paid with alternate currency (fragments).
+                -- If GetMerchantItemCostInfo(i) is 0, the item is gold-priced; do not record it,
+                -- or we would wrongly treat copper (e.g. 80000 for 8g) as fragment count.
+                local costInfoCount = (GetMerchantItemCostInfo and GetMerchantItemCostInfo(i)) or 0
+                if costInfoCount and costInfoCount > 0 and GetMerchantItemCostItem then
+                    local _, value = GetMerchantItemCostItem(i, 1)
+                    if value and value > 0 then
+                        db.FragmentCosts[id] = value / quantity
+                        count = count + 1
+                    end
+                end
+            end
+        end
+    end
+    if ProfLevelHelper and ProfLevelHelper.Print then
+        ProfLevelHelper.Print(string.format("已记录泰坦碎片兑换: %d 种物品。请在设置中填写「碎片单价(铜)」(默认8银)。", count))
+    end
+end
+
+-- Dev only: export FragmentCosts as Lua for saving to FragmentCosts.lua. Format: ProfLevelHelper_FragmentCosts = { ... }
+function ProfLevelHelper.ExportFragmentCostsToLuaString()
+    local db = ProfLevelHelperDB
+    if not db or not db.FragmentCosts then return "ProfLevelHelper_FragmentCosts = {\n}\n" end
+    local t = {}
+    t[#t + 1] = "-- Titan Fragment costs: itemID = fragments per unit. Save as FragmentCosts.lua in addon folder.\nProfLevelHelper_FragmentCosts = {\n"
+    for id, frag in pairs(db.FragmentCosts) do
+        if type(id) == "number" and type(frag) == "number" then
+            t[#t + 1] = ("  [%d] = %s,\n"):format(id, tostring(frag))
+        end
+    end
+    t[#t + 1] = "}\n"
+    return table.concat(t)
+end

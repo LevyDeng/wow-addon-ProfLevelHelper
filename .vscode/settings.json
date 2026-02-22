@@ -1,0 +1,23 @@
+{
+  "Lua.runtime.version": "Lua 5.1",
+  "Lua.runtime.builtin": {
+    "basic": "disable",
+    "debug": "disable",
+    "io": "disable",
+    "math": "disable",
+    "os": "disable",
+    "package": "disable",
+    "string": "disable",
+    "table": "disable",
+    "utf8": "disable"
+  },
+  "Lua.workspace.library": [
+    "c:\\Users\\ROG\\.cursor\\extensions\\ketho.wow-api-0.20.8\\Annotations\\Core"
+  ],
+  "Lua.diagnostics.globals": [
+    "StaticPopupDialogs",
+    "StaticPopup_Show",
+    "SlashCmdList",
+    "DEFAULT_CHAT_FRAME"
+  ]
+}

@@ -16,6 +16,16 @@ local function InitDB()
     db.VendorPrices = db.VendorPrices or {}
     db.NameToID = db.NameToID or {}
     db.TrainerCosts = db.TrainerCosts or {}
+    -- Fragment data comes only from FragmentCosts.lua; replace SavedVariables so old/wrong data is cleared.
+    db.FragmentCosts = {}
+    if ProfLevelHelper_FragmentCosts and type(ProfLevelHelper_FragmentCosts) == "table" then
+        for k, v in pairs(ProfLevelHelper_FragmentCosts) do
+            if type(k) == "number" and type(v) == "number" and v > 0 then
+                db.FragmentCosts[k] = v
+            end
+        end
+    end
+    if db.FragmentValueInCopper == nil then db.FragmentValueInCopper = 800 end
 
     if db.MinAHQuantity == nil then db.MinAHQuantity = 50 end
     if db.IncludeHolidayRecipes == nil then db.IncludeHolidayRecipes = false end
@@ -59,6 +69,10 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
         L.ScanAH()
     elseif msg == "list" or msg == "show" then
         L.ShowResultList()
+    elseif msg == "recordfragment" or msg == "fragment" then
+        if L.RecordFragmentCosts then L.RecordFragmentCosts() end
+    elseif msg == "dumpfragment" then
+        if L.ShowFragmentDump then L.ShowFragmentDump() end
     elseif msg == "options" or msg == "config" then
         L.OpenOptions()
     elseif msg == "debug" then

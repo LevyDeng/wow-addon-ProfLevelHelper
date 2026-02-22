@@ -205,7 +205,7 @@ function L.GetAHQuantity(itemId)
     return db.AHQty[itemId] or 0
 end
 
--- Resolve item name or id to price: AH then vendor. Returns copper.
+-- Resolve item name or id to price: min of AH, vendor, fragment (by FragmentValueInCopper). Returns copper.
 function L.GetItemPrice(itemNameOrLinkOrId)
     local id = type(itemNameOrLinkOrId) == "number" and itemNameOrLinkOrId or nil
     if type(itemNameOrLinkOrId) == "string" then
@@ -216,20 +216,26 @@ function L.GetItemPrice(itemNameOrLinkOrId)
             id = ProfLevelHelperDB.NameToID[itemNameOrLinkOrId]
         end
     end
-    if id and ProfLevelHelperDB.AHPrices and ProfLevelHelperDB.AHPrices[id] then
-        return ProfLevelHelperDB.AHPrices[id]
+    if not id then return 0 end
+    local db = ProfLevelHelperDB
+    local best = nil
+    if db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0 then
+        best = db.AHPrices[id]
     end
-    if id and ProfLevelHelperDB.VendorPrices and ProfLevelHelperDB.VendorPrices[id] then
-        return ProfLevelHelperDB.VendorPrices[id]
+    if db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0 then
+        local v = db.VendorPrices[id]
+        if not best or v < best then best = v end
     end
-    -- Fallback: GetItemInfo vendor price (sell price; buy often roughly 4x higher)
-    if id then
+    if db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0 then
+        local fc = db.FragmentCosts[id] * db.FragmentValueInCopper
+        if fc > 0 and (not best or fc < best) then best = fc end
+    end
+    if best then return best end
+    if GetItemInfo then
         local _, _, _, _, _, _, _, _, _, _, vendorPrice = GetItemInfo(id)
-        if vendorPrice and vendorPrice > 0 then
-            return vendorPrice * 4
-        end
+        if vendorPrice and vendorPrice > 0 then return vendorPrice * 4 end
     end
-    return 0 -- Failed to calculate
+    return 0
 end
 
 local EFF_COST_UNKNOWN = 999999999
@@ -376,6 +382,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 end
                 local hasPrice = (effectiveCost[id] and effectiveCost[id] < EFF_COST_UNKNOWN)
                     or (db.AHPrices and db.AHPrices[id]) or (db.VendorPrices and db.VendorPrices[id])
+                    or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
                 if not hasPrice then
                     allowed = false
                     break
