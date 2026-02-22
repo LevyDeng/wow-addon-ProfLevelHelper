@@ -329,7 +329,15 @@ function L.ShowResultList()
     local startSkill = ProfLevelHelperDB.TargetSkillStart or pCurr or 1
     local endSkill = ProfLevelHelperDB.TargetSkillEnd or pMax or 350
 
-    local route, profName, actualStart, actualEnd, totalCost = L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
+    -- Lua has no try/catch; pcall(f) returns ok, ... or false, errmsg.
+    local ok, a, b, c, d, e = pcall(function()
+        return L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
+    end)
+    if not ok then
+        L.Print("|cffff0000ProfLevelHelper 错误: " .. tostring(a) .. "|r")
+        return
+    end
+    local route, profName, actualStart, actualEnd, totalCost = a, b, c, d, e
     if not route or #route == 0 then
         local s = actualStart or startSkill or "?"
         local e = actualEnd or endSkill or "?"

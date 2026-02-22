@@ -336,6 +336,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local effectiveCost = L.ComputeEffectiveMaterialCosts(recipes)
 
     -- Pre-calculate material and acquisition costs to save time, and apply source filters
+    local db = ProfLevelHelperDB
     local filteredRecipes = {}
     for _, rec in ipairs(recipes) do
         rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
@@ -364,7 +365,6 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         rec.acqSource = rSource or "未知来源"
         
         local allowed = true
-        local db = ProfLevelHelperDB
         if not rec.isKnown then
             if rec.acqSource == "训练师学习" and db.IncludeSourceTrainer == false then allowed = false end
             if rec.acqSource == "拍卖行购买" and db.IncludeSourceAH == false then allowed = false end
