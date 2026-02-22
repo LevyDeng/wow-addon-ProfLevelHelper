@@ -130,7 +130,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 370)
+    f:SetSize(320, 400)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -243,8 +243,28 @@ function L.OpenOptions()
     end)
     f.pctInput = pctInput
 
+    -- Min AH quantity for materials (only consider materials with at least this many on AH)
+    local minQtyLabel = f.minQtyLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    minQtyLabel:SetPoint("TOPLEFT", 24, -200)
+    minQtyLabel:SetText("材料在拍卖行中的最小存在数量:")
+    f.minQtyLabel = minQtyLabel
+    local minQtyInput = f.minQtyInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    minQtyInput:SetSize(50, 20)
+    minQtyInput:SetPoint("LEFT", minQtyLabel, "RIGHT", 10, 0)
+    minQtyInput:SetAutoFocus(false)
+    minQtyInput:SetNumeric(true)
+    minQtyInput:SetText(tostring(ProfLevelHelperDB.MinAHQuantity or 50))
+    minQtyInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val and val >= 0 then
+            ProfLevelHelperDB.MinAHQuantity = val
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end
+    end)
+    f.minQtyInput = minQtyInput
+
     -- Source Filters
-    local yOfs = -200
+    local yOfs = -230
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)

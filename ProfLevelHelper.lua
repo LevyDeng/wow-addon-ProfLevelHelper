@@ -12,10 +12,12 @@ local function InitDB()
     ProfLevelHelperDB = ProfLevelHelperDB or {}
     local db = ProfLevelHelperDB
     db.AHPrices = db.AHPrices or {}
+    db.AHQty = db.AHQty or {}
     db.VendorPrices = db.VendorPrices or {}
     db.NameToID = db.NameToID or {}
     db.TrainerCosts = db.TrainerCosts or {}
-    
+
+    if db.MinAHQuantity == nil then db.MinAHQuantity = 50 end
     if db.IncludeHolidayRecipes == nil then db.IncludeHolidayRecipes = false end
     if db.scanPerFrame == nil then db.scanPerFrame = 100 end
     if db.IgnoredOutlierPercent == nil then db.IgnoredOutlierPercent = 0.10 end

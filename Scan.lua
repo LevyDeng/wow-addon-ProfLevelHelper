@@ -55,6 +55,12 @@ function L.StartAHScan()
     globalUpdatedCount = 0
     L.TempAHData = {} -- 用来暂存物品的所有单价与数量排列
 
+    -- Full rescan replaces previous data so items no longer on AH are not used in routes.
+    local db = ProfLevelHelperDB
+    db.AHPrices = {}
+    db.AHQty = {}
+    db.NameToID = {}
+
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
     eventFrame:SetScript("OnEvent", function(self)
@@ -243,7 +249,8 @@ end
 function L.FinishScan()
     local db = ProfLevelHelperDB
     db.AHPrices = db.AHPrices or {}
-    
+    db.AHQty = db.AHQty or {}
+
     local pct = db.IgnoredOutlierPercent
     if pct == nil then pct = 0.10 end -- default: ignore bottom 10% (outlier low prices)
     if pct > 1 then pct = pct / 100 end -- normalize if saved as e.g. 10 instead of 0.10
@@ -286,6 +293,7 @@ function L.FinishScan()
                             db.AHPrices[itemId] = finalPrice
                             globalUpdatedCount = globalUpdatedCount + 1
                         end
+                        db.AHQty[itemId] = totalQ
                     end
                 end
             end
