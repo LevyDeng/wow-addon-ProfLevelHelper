@@ -437,7 +437,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                         local numMade = rec.numMade or 1
                         local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
                         local sellBackAH = (rec.ahPricePerItem or 0) * numMade * expectedCrafts
-                        local sellBack = sellBackVendor
+                        local sellBack = (db.SellBackMethod == "ah") and sellBackAH or sellBackVendor
                         local stepCost = matCostGross - sellBack
 
                         -- If the recipe from the previous step is different, we add the acquisition cost.

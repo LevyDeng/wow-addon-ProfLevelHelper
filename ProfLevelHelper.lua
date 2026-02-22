@@ -26,6 +26,7 @@ local function InitDB()
         end
     end
     if db.FragmentValueInCopper == nil then db.FragmentValueInCopper = 800 end
+    if db.SellBackMethod == nil then db.SellBackMethod = "vendor" end
 
     if db.MinAHQuantity == nil then db.MinAHQuantity = 50 end
     if db.IncludeHolidayRecipes == nil then db.IncludeHolidayRecipes = false end

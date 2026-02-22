@@ -282,8 +282,39 @@ function L.OpenOptions()
         end
     end)
     f.fragInput = fragInput
+
+    -- Sell-back method: vendor or AH (affects net cost calculation)
+    local sellBackLabel = f.sellBackLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    sellBackLabel:SetPoint("TOPLEFT", 24, -255)
+    sellBackLabel:SetText("回血方式:")
+    f.sellBackLabel = sellBackLabel
+    local cbVendor = f.cb_sellBackVendor or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    cbVendor:SetPoint("LEFT", sellBackLabel, "RIGHT", 8, 0)
+    cbVendor:SetChecked(ProfLevelHelperDB.SellBackMethod ~= "ah")
+    cbVendor:SetScript("OnClick", function()
+        ProfLevelHelperDB.SellBackMethod = "vendor"
+        if f.cb_sellBackAH then f.cb_sellBackAH:SetChecked(false) end
+        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+    end)
+    f.cb_sellBackVendor = cbVendor
+    local lblV = cbVendor:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    lblV:SetPoint("LEFT", cbVendor, "RIGHT", 2, 0)
+    lblV:SetText("卖店")
+    local cbAH = f.cb_sellBackAH or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    cbAH:SetPoint("LEFT", lblV, "RIGHT", 16, 0)
+    cbAH:SetChecked(ProfLevelHelperDB.SellBackMethod == "ah")
+    cbAH:SetScript("OnClick", function()
+        ProfLevelHelperDB.SellBackMethod = "ah"
+        if f.cb_sellBackVendor then f.cb_sellBackVendor:SetChecked(false) end
+        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+    end)
+    f.cb_sellBackAH = cbAH
+    local lblA = cbAH:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    lblA:SetPoint("LEFT", cbAH, "RIGHT", 2, 0)
+    lblA:SetText("拍卖")
+
     -- Source Filters
-    local yOfs = -260
+    local yOfs = -285
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
@@ -319,6 +350,10 @@ function L.OpenOptions()
     close:SetScript("OnClick", function() f:Hide() end)
     f.closeBtn = close
 
+    if f.cb_sellBackVendor and f.cb_sellBackAH then
+        f.cb_sellBackVendor:SetChecked(ProfLevelHelperDB.SellBackMethod ~= "ah")
+        f.cb_sellBackAH:SetChecked(ProfLevelHelperDB.SellBackMethod == "ah")
+    end
     L.UpdateScanButtonState()
     f:Show()
 end
