@@ -15,6 +15,8 @@ local function InitDB()
     db.AHQty = db.AHQty or {}
     db.VendorPrices = db.VendorPrices or {}
     db.NameToID = db.NameToID or {}
+    db.IDToName = db.IDToName or {}
+    db.IDToName = db.IDToName or {}
     db.TrainerCosts = db.TrainerCosts or {}
     -- Fragment data comes only from FragmentCosts.lua; replace SavedVariables so old/wrong data is cleared.
     db.FragmentCosts = {}
@@ -27,6 +29,7 @@ local function InitDB()
     end
     if db.FragmentValueInCopper == nil then db.FragmentValueInCopper = 800 end
     if db.SellBackMethod == nil then db.SellBackMethod = "vendor" end
+    db.AHSellBackBlacklist = db.AHSellBackBlacklist or {}
 
     if db.MinAHQuantity == nil then db.MinAHQuantity = 50 end
     if db.IncludeHolidayRecipes == nil then db.IncludeHolidayRecipes = false end
@@ -78,12 +81,25 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
         L.OpenOptions()
     elseif msg == "debug" then
         L.PrintDebugInfo()
+    elseif msg == "testlearn" then
+        if L.TestRecipeLearnLevels then L.TestRecipeLearnLevels() end
+    elseif msg == "testcost" or msg:match("^testcost ") then
+        local skill = msg:match("^testcost%s+(%d+)")
+        if not L.TestCostAtSkill then
+            L.Print("testcost 未加载，请确认已打开专业技能窗口后重载界面 /reload")
+        else
+            L.Print("正在执行 testcost，等级: " .. (skill or "175"))
+            local ok, err = pcall(function() L.TestCostAtSkill(skill) end)
+            if not ok then L.Print("testcost 报错: " .. tostring(err)) end
+        end
     else
-        L.Print("Usage: /plh scan | list | options | debug")
+        L.Print("Usage: /plh scan | list | options | debug | testlearn | testcost [等级]")
         L.Print("  scan    - 扫描拍卖行")
         L.Print("  list    - 显示推荐冲级列表")
         L.Print("  options - 打开设置界面")
         L.Print("  debug   - 打印调试信息（故障排查用）")
+        L.Print("  testlearn - 检测配方学习等级来源(ala vs 本插件)，需先打开专业窗口")
+        L.Print("  testcost [等级] - 在指定等级打印各配方单次/升1级成本，默认175")
         L.Print("Feedback: ptrees@126.com")
     end
 end

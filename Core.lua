@@ -5,6 +5,7 @@
 ]]
 
 local L = ProfLevelHelper
+local EFF_COST_UNKNOWN = 999999999
 
 -- Skill-up chance: (G - X) / (G - Y), clamp to [0, 1]. Orange = 1, Gray = 0.
 function L.CalcSkillUpChance(graySkill, yellowSkill, playerSkill)
@@ -72,8 +73,21 @@ function L.GetRecipeList(includeHoliday)
                         local numMade = (type(numMadeMin) == "number" and type(numMadeMax) == "number") and ((numMadeMin + numMadeMax) / 2) or 1
                         if numMade <= 0 then numMade = 1 end
 
+                        local recipeName = name
+                        if recipeItemIDs and recipeItemIDs[1] then
+                            local rid = recipeItemIDs[1]
+                            local db = ProfLevelHelperDB
+                            if db and db.IDToName and db.IDToName[rid] then
+                                recipeName = db.IDToName[rid]
+                            elseif GetItemInfo then
+                                local rn = GetItemInfo(rid)
+                                if rn and rn ~= "" then recipeName = rn end
+                            end
+                        end
+
                         list[#list + 1] = {
                             name = name,
+                            recipeName = recipeName,
                             sid = sid,
                             learn = learn,
                             yellow = yellow,
@@ -119,8 +133,22 @@ function L.GetRecipeList(includeHoliday)
                     if nMin and nMax then numMade = (nMin + nMax) / 2 elseif nMin then numMade = nMin end
                     if numMade <= 0 then numMade = 1 end
                 end
+                local recipeName = name
+                if link and type(link) == "string" then
+                    local rid = tonumber(link:match("item:(%d+)"))
+                    if rid then
+                        local db = ProfLevelHelperDB
+                        if db and db.IDToName and db.IDToName[rid] then
+                            recipeName = db.IDToName[rid]
+                        elseif GetItemInfo then
+                            local rn = GetItemInfo(rid)
+                            if rn and rn ~= "" then recipeName = rn end
+                        end
+                    end
+                end
                 list[#list + 1] = {
                     name = name,
+                    recipeName = recipeName,
                     index = i,
                     skillType = skillType,
                     numSkillUps = numSkillUps,
@@ -134,6 +162,48 @@ function L.GetRecipeList(includeHoliday)
         end
     end
     return list, profName, currentSkill, maxSkill or 450
+end
+
+-- Preload item data for a list of item IDs using async ContinueOnItemLoad.
+-- Calls callback() once every uncached item finishes loading, or after timeout seconds.
+-- If all items are already cached, callback is called on the next frame.
+function L.EnsureItemsLoaded(itemIDs, callback, timeout)
+    if not itemIDs or #itemIDs == 0 then
+        callback()
+        return
+    end
+    local pending = 0
+    local done = false
+    local function finish()
+        if not done then
+            done = true
+            callback()
+        end
+    end
+    for _, id in ipairs(itemIDs) do
+        if GetItemInfo(id) == nil then
+            if Item and Item.CreateFromItemID then
+                pending = pending + 1
+                local item = Item:CreateFromItemID(id)
+                item:ContinueOnItemLoad(function()
+                    pending = pending - 1
+                    if pending <= 0 then finish() end
+                end)
+            end
+        end
+    end
+    if pending <= 0 then
+        -- All already cached; defer one frame so the call is always async.
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, finish)
+        else
+            finish()
+        end
+        return
+    end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(timeout or 3.0, finish)
+    end
 end
 
 local HOLIDAY_RECIPES = {
@@ -187,6 +257,129 @@ function L.GetRecipeThresholds(recipeName, profName, currentSkill)
     return yellow, gray
 end
 
+-- Debug: print learn/yellow/grey for 辣味狼排 and nearby recipes. Run with /plh testlearn (open profession first).
+function L.TestRecipeLearnLevels()
+    local profName, currentSkill, maxSkill = L.GetCurrentProfessionSkill()
+    if not profName then
+        L.Print("请先打开专业技能窗口后再执行 /plh testlearn")
+        return
+    end
+    L.Print("--- Recipe learn level test (prof: " .. profName .. ") ---")
+
+    local ala = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+    if not ala or not ala.get_pid_by_pname or not ala.get_list_by_pid or not ala.get_difficulty_rank_list_by_sid then
+        L.Print("ala DataAgent not available - recipe data comes from game UI fallback (no learn/yellow/grey).")
+    else
+        local pid = ala.get_pid_by_pname(profName)
+        local sids = pid and ala.get_list_by_pid(pid)
+        if not sids then
+            L.Print("ala: no spell list for this profession.")
+        else
+            -- Raw ala: find 辣味狼排 by spell name and print what ala returns
+            for _, sid in ipairs(sids) do
+                local name = GetSpellInfo(sid)
+                if name == "辣味狼排" then
+                    local learn, yellow, green, grey = ala.get_difficulty_rank_list_by_sid(sid)
+                    L.Print("[ala raw] 辣味狼排 sid=" .. tostring(sid) .. " learn=" .. tostring(learn) .. " yellow=" .. tostring(yellow) .. " green=" .. tostring(green) .. " grey=" .. tostring(grey))
+                    break
+                end
+            end
+            -- List all recipes with learn in 170..260 for context
+            L.Print("[ala] Recipes with learn in 170-260:")
+            for _, sid in ipairs(sids) do
+                local name = GetSpellInfo(sid)
+                if name then
+                    local learn, yellow, green, grey = ala.get_difficulty_rank_list_by_sid(sid)
+                    if learn and learn >= 170 and learn <= 260 then
+                        L.Print("  learn=" .. tostring(learn) .. " yellow=" .. tostring(yellow) .. " grey=" .. tostring(grey) .. " | " .. tostring(name))
+                    end
+                end
+            end
+        end
+    end
+
+    -- What we actually use (from GetRecipeList)
+    local recipes = L.GetRecipeList(ProfLevelHelperDB and ProfLevelHelperDB.IncludeHolidayRecipes)
+    if not recipes then
+        L.Print("GetRecipeList returned nil.")
+        return
+    end
+    local db = ProfLevelHelperDB or {}
+    local found = false
+    for _, rec in ipairs(recipes) do
+        if rec.name == "辣味狼排" then
+            found = true
+            local effective = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name]) and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
+            L.Print("[ProfLevelHelper] 辣味狼排 rec.learn=" .. tostring(rec.learn) .. " yellow=" .. tostring(rec.yellow) .. " grey=" .. tostring(rec.grey) .. " -> effective learnSkill=" .. tostring(effective))
+            break
+        end
+    end
+    if not found then
+        L.Print("[ProfLevelHelper] 辣味狼排 not in filtered recipe list (may be filtered out by source/material).")
+    end
+    L.Print("--- end test ---")
+end
+
+-- Debug: at a given skill level, print per-craft cost and per-skill-point cost for each valid recipe. Run /plh testcost [skill], default 175.
+function L.TestCostAtSkill(skill)
+    skill = tonumber(skill) or 175
+    local recipes, profName = L.GetRecipeList(ProfLevelHelperDB and ProfLevelHelperDB.IncludeHolidayRecipes)
+    if not recipes or #recipes == 0 then
+        L.Print("请先打开专业技能窗口（点开烹饪等专业）后再执行 /plh testcost " .. skill)
+        return
+    end
+    local db = ProfLevelHelperDB or {}
+    local effectiveCost = L.ComputeEffectiveMaterialCosts(recipes)
+    for _, rec in ipairs(recipes) do
+        rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
+        rec.sellPricePerItem = 0
+        rec.ahPricePerItem = 0
+        if rec.createdItemID and GetItemInfo then
+            local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
+            if vp and vp > 0 then rec.sellPricePerItem = vp end
+        end
+        if rec.createdItemID and db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
+            rec.ahPricePerItem = db.AHPrices[rec.createdItemID]
+        end
+    end
+    local filteredRecipes = {}
+    for _, rec in ipairs(recipes) do
+        local allowed = true
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+            if not id then allowed = false break end
+            local c = effectiveCost[id]
+            if not c or c >= EFF_COST_UNKNOWN then allowed = false break end
+        end
+        if allowed then filteredRecipes[#filteredRecipes + 1] = rec end
+    end
+    L.Print("--- Cost at skill " .. skill .. " (" .. profName .. ", " .. #filteredRecipes .. " recipes) ---")
+    for _, rec in ipairs(filteredRecipes) do
+        local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name]) and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
+        local yellow, gray = rec.yellow, rec.grey
+        if not yellow or not gray then
+            yellow, gray = L.GetRecipeThresholds(rec.name, profName, skill)
+        end
+        if skill >= learnSkill and skill < gray then
+            local chance = L.CalcSkillUpChance(gray, yellow, skill)
+            if chance > 0 then
+                local expectedCrafts = 1 / chance
+                local numMade = rec.numMade or 1
+                local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
+                local sellBackAH = (rec.ahPricePerItem or 0) * numMade * expectedCrafts
+                local useAH = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+                local sellBack = useAH and sellBackAH or sellBackVendor
+                local matGross = rec.matCost * expectedCrafts
+                local stepCost = matGross - sellBack
+                local matPerCraft = rec.matCost
+                local sellPerCraft = (useAH and (rec.ahPricePerItem or 0) or (rec.sellPricePerItem or 0)) * numMade
+                L.Print(string.format("  %s | 单次: 材料%d铜 回血%d铜 净%d铜 | 升1级: 期望%.2f次 净花费%d铜", rec.name, matPerCraft, sellPerCraft, matPerCraft - sellPerCraft, expectedCrafts, stepCost))
+            end
+        end
+    end
+    L.Print("--- end testcost ---")
+end
+
 -- Cost per one craft: materials (from AH or vendor).
 function L.CraftCost(reagents)
     local cost = 0
@@ -238,8 +431,6 @@ function L.GetItemPrice(itemNameOrLinkOrId)
     return 0
 end
 
-local EFF_COST_UNKNOWN = 999999999
-
 -- Build effective cost per item: min(market price, cost to craft from other recipes).
 -- Handles chains (e.g. Lesser Healing Potion as material for Healing Potion). Returns map itemID -> copper.
 function L.ComputeEffectiveMaterialCosts(recipes)
@@ -260,7 +451,8 @@ function L.ComputeEffectiveMaterialCosts(recipes)
 
     for id in pairs(itemIds) do
         local p = L.GetItemPrice(id)
-        effectiveCost[id] = (p ~= nil and p >= 0) and p or EFF_COST_UNKNOWN
+        -- Treat price=0 as "no data" (EFF_COST_UNKNOWN), not free.
+        effectiveCost[id] = (p and p > 0) and p or EFF_COST_UNKNOWN
     end
 
     local maxIter = 50
@@ -324,15 +516,6 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         return nil, profName, targetStart, targetEnd, 0 
     end
     
-    -- DP array storing min cost to reach a specific skill point
-    local dp = {}
-    local path = {} -- path[skill] = { prevSkill = S, cost = C, recipe = R, crafts = N, matCost = M, recCost = RC }
-    
-    for s = targetStart, targetEnd do
-        dp[s] = 99999999999 -- effectively infinity
-    end
-    dp[targetStart] = 0
-
     local effectiveCost = L.ComputeEffectiveMaterialCosts(recipes)
 
     -- Pre-calculate material and acquisition costs to save time, and apply source filters
@@ -378,8 +561,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     allowed = false
                     break
                 end
-                local hasPrice = (effectiveCost[id] and effectiveCost[id] < EFF_COST_UNKNOWN)
-                    or (db.AHPrices and db.AHPrices[id]) or (db.VendorPrices and db.VendorPrices[id])
+                local hasPrice = (effectiveCost[id] and effectiveCost[id] > 0 and effectiveCost[id] < EFF_COST_UNKNOWN)
+                    or (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0)
+                    or (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
                     or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
                 if not hasPrice then
                     allowed = false
@@ -388,13 +572,22 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             end
         end
         -- Exclude recipe if any material we price from AH has AH quantity below minimum.
+        -- Also excludes materials that are not on AH at all (qty=0) when they have no
+        -- explicit vendor or fragment price, since GetItemInfo-only prices are unreliable.
         local minQty = (db.MinAHQuantity and db.MinAHQuantity > 0) and db.MinAHQuantity or 0
         if allowed and minQty > 0 and db.AHPrices and db.AHQty and next(db.AHQty) then
             for _, r in ipairs(rec.reagents or {}) do
                 local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
-                if id and db.AHPrices[id] and (db.AHQty[id] or 0) < minQty then
-                    allowed = false
-                    break
+                if id then
+                    local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+                        or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
+                    if not hasVendorOrFrag then
+                        local ahQty = db.AHQty[id] or 0
+                        if ahQty < minQty then
+                            allowed = false
+                            break
+                        end
+                    end
                 end
             end
         end
@@ -405,151 +598,140 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     end
     recipes = filteredRecipes
     L.Print("过滤后可用配方数量: " .. #recipes)
-    
-    -- Find shortest path using Bellman-Ford like DP logic across skill levels
-    for currentPoint = targetStart, targetEnd - 1 do
-        if dp[currentPoint] < 99999999999 then
-            -- We track which recipes have had their acquisition cost paid in this DP branch.
-            -- A true Dijkstra with full state would require a bitmask of learned recipes, which is too huge.
-            -- Heuristic: Assume the user buys the recipe exactly once when they craft it for the first time *in this step*.
-            for _, rec in ipairs(recipes) do
-                local learnSkill = rec.learn or 1
-                local yellow, gray = rec.yellow, rec.grey
-                if not yellow or not gray then
-                    yellow, gray = L.GetRecipeThresholds(rec.name, profName, currentPoint)
-                end
-                
-                -- Check if we can craft it at all at 'currentPoint'
-                if currentPoint >= learnSkill and currentPoint < gray then
-                    local chance = L.CalcSkillUpChance(gray, yellow, currentPoint)
-                    if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
-                        if rec.skillType == "optimal" then chance = 1
-                        elseif rec.skillType == "easy" then chance = 0.6
-                        elseif rec.skillType == "medium" then chance = 0.3
-                        end
-                    end
-                    if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
-                    
-                    if chance > 0 then
-                        -- Expected crafts to gain 1 skill point
-                        local expectedCrafts = 1 / chance
-                        local matCostGross = rec.matCost * expectedCrafts
-                        local numMade = rec.numMade or 1
-                        local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
-                        local sellBackAH = (rec.ahPricePerItem or 0) * numMade * expectedCrafts
-                        local sellBack = (db.SellBackMethod == "ah") and sellBackAH or sellBackVendor
-                        local stepCost = matCostGross - sellBack
 
-                        -- If the recipe from the previous step is different, we add the acquisition cost.
-                        local isNewRecipe = true
-                        if path[currentPoint] and path[currentPoint].recipe.name == rec.name then
-                            isNewRecipe = false
-                        end
-                        
-                        local additionalRecCost = 0
-                        local recSource = rec.acqSource
-                        if isNewRecipe and not rec.isKnown then
-                            additionalRecCost = rec.acqCost
-                        end
-                        
-                        local nextPoint = currentPoint + 1
-                        local newTotalCost = dp[currentPoint] + stepCost + additionalRecCost
-                        
-                        if newTotalCost < dp[nextPoint] then
-                            dp[nextPoint] = newTotalCost
-                            path[nextPoint] = {
-                                prevSkill = currentPoint,
-                                stepTotalCost = stepCost + additionalRecCost,
-                                recipe = rec,
-                                crafts = expectedCrafts,
-                                matCost = matCostGross,
-                                sellBackVendor = sellBackVendor,
-                                sellBackAH = sellBackAH,
-                                recCost = additionalRecCost,
-                                recSource = recSource
-                            }
-                        end
+    -- ===== Segment DP with prefix sums =====
+    -- dp[s] = min total cost to reach skill s from targetStart.
+    -- Optimal transition: dp[s] = min over (recipe r, start t):
+    --   dp[t] + acqCost[r] + sum_{l=t}^{s-1} stepCost(r, l)
+    -- = min over r: acqCost[r] + prefix[r][s] + min_t (dp[t] - prefix[r][t])
+    --
+    -- Maintained with a running minimum best[r] = min_t (dp[t] - prefix[r][t]),
+    -- updated as t advances. O(N * R) where N = level range, R = recipe count.
+
+    -- Step 1: precompute per-level step costs and prefix sums for each recipe.
+    local recInfos = {}
+    for ri, rec in ipairs(recipes) do
+        local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name])
+            and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
+        local yellow, gray = rec.yellow, rec.grey
+        if not yellow or not gray then
+            yellow, gray = L.GetRecipeThresholds(rec.name, profName, learnSkill)
+        end
+        local useAH   = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+        local numMade = rec.numMade or 1
+        local acqCost = (not rec.isKnown) and (rec.acqCost or 0) or 0
+        local validStart = math.max(learnSkill, targetStart)
+        local validEnd   = math.min(gray - 1, targetEnd - 1)
+
+        -- Prefix arrays indexed by skill level l in [validStart, validEnd+1].
+        -- pX[l] = cumulative X from validStart up to but not including level l.
+        local pStep, pCrafts, pMat, pSellV, pSellA = {}, {}, {}, {}, {}
+        local cs, cc, cm, cv, ca = 0, 0, 0, 0, 0
+        for l = validStart, validEnd + 1 do
+            pStep[l] = cs; pCrafts[l] = cc; pMat[l] = cm; pSellV[l] = cv; pSellA[l] = ca
+            if l <= validEnd then
+                local chance = L.CalcSkillUpChance(gray, yellow, l)
+                if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
+                    if rec.skillType == "optimal" then chance = 1
+                    elseif rec.skillType == "easy"    then chance = 0.6
+                    elseif rec.skillType == "medium"  then chance = 0.3
                     end
+                end
+                if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
+                if chance > 0 then
+                    local ec = 1 / chance
+                    local mg = rec.matCost * ec
+                    local svV = (rec.sellPricePerItem or 0) * numMade * ec
+                    local svA = (rec.ahPricePerItem  or 0) * numMade * ec
+                    local sb  = useAH and svA or svV
+                    cs = cs + (mg - sb); cc = cc + ec; cm = cm + mg; cv = cv + svV; ca = ca + svA
+                end
+            end
+        end
+
+        recInfos[ri] = {
+            rec = rec, validStart = validStart, validEnd = validEnd, gray = gray,
+            acqCost = acqCost,
+            pStep = pStep, pCrafts = pCrafts, pMat = pMat, pSellV = pSellV, pSellA = pSellA,
+        }
+    end
+
+    -- Step 2: Segment DP.
+    local DPINF = 99999999999
+    local dp       = {}; for s = targetStart, targetEnd do dp[s] = DPINF end; dp[targetStart] = 0
+    local segPath  = {}                     -- segPath[s] = { ri, startT, recCostActual }
+    local best     = {}; for ri = 1, #recInfos do best[ri]  = DPINF end  -- min_t (dp[t]-prefix[t])
+    local bestT    = {}; for ri = 1, #recInfos do bestT[ri] = targetStart end
+
+    for s = targetStart + 1, targetEnd do
+        -- Update running minimums using t = s-1 as a potential segment start.
+        local t = s - 1
+        for ri, info in ipairs(recInfos) do
+            if t >= info.validStart and t <= info.validEnd and dp[t] < DPINF and info.pStep[t] then
+                local val = dp[t] - info.pStep[t]
+                if val < best[ri] then best[ri] = val; bestT[ri] = t end
+            end
+        end
+        -- Compute dp[s]: find best recipe r and start t with segment [t, s).
+        for ri, info in ipairs(recInfos) do
+            if s <= info.gray and info.pStep[s] and best[ri] < DPINF then
+                local candidate = info.acqCost + info.pStep[s] + best[ri]
+                if candidate < dp[s] then
+                    dp[s] = candidate
+                    segPath[s] = { ri = ri, startT = bestT[ri], recCostActual = info.acqCost }
                 end
             end
         end
     end
-    
-    if dp[targetEnd] >= 99999999999 then
+
+    if dp[targetEnd] >= DPINF then
         local maxReached = targetStart
         for s = targetStart, targetEnd do
-            if dp[s] < 99999999999 then maxReached = s end
+            if dp[s] < DPINF then maxReached = s end
         end
         L.Print(string.format("错误: 算法在等级 %d 处中断，无法到达 %d。请检查此时是否缺少可用的后续配方。", maxReached, targetEnd))
-        return nil, profName, targetStart, targetEnd, 0 -- Unreachable
+        return nil, profName, targetStart, targetEnd, 0
     end
-    
-    -- Reconstruct the route by backtracking
-    local route = {}
-    local curr = targetEnd
-    while curr > targetStart do
-        local step = path[curr]
-        if not step then break end
-        table.insert(route, 1, {
-            skillReached = curr,
-            prevSkill = step.prevSkill,
-            recipe = step.recipe,
-            crafts = step.crafts,
-            matCost = step.matCost,
-            sellBackVendor = step.sellBackVendor or 0,
-            sellBackAH = step.sellBackAH or 0,
-            recCost = step.recCost or 0,
-            recSource = step.recSource,
-            stepTotalCost = step.stepTotalCost
-        })
-        curr = step.prevSkill
-    end
-    
-    -- Consolidate contiguous steps using the same recipe into larger segments
+
+    -- Step 3: Reconstruct segments by backtracking through segPath.
+    -- Each segPath entry represents a contiguous skill segment [startT, endSkill).
+    -- Recipe acquisition cost is charged at most once per recipe name (display only).
     local consolidatedRoute = {}
-    local currentSegment = nil
-    
-    for i, step in ipairs(route) do
-        if not currentSegment then
-            currentSegment = {
-                startSkill = step.prevSkill,
-                endSkill = step.skillReached,
-                recipe = step.recipe,
-                totalCrafts = step.crafts,
-                totalMatCost = step.matCost,
-                totalSellBackVendor = step.sellBackVendor or 0,
-                totalSellBackAH = step.sellBackAH or 0,
-                totalRecCost = step.recCost or 0,
-                recSource = step.recSource,
-                segmentTotalCost = step.stepTotalCost
-            }
-        elseif currentSegment.recipe.name == step.recipe.name then
-            currentSegment.endSkill = step.skillReached
-            currentSegment.totalCrafts = currentSegment.totalCrafts + step.crafts
-            currentSegment.totalMatCost = currentSegment.totalMatCost + step.matCost
-            currentSegment.totalSellBackVendor = currentSegment.totalSellBackVendor + (step.sellBackVendor or 0)
-            currentSegment.totalSellBackAH = currentSegment.totalSellBackAH + (step.sellBackAH or 0)
-            currentSegment.totalRecCost = currentSegment.totalRecCost + (step.recCost or 0)
-            currentSegment.segmentTotalCost = currentSegment.segmentTotalCost + step.stepTotalCost
-        else
-            table.insert(consolidatedRoute, currentSegment)
-            currentSegment = {
-                startSkill = step.prevSkill,
-                endSkill = step.skillReached,
-                recipe = step.recipe,
-                totalCrafts = step.crafts,
-                totalMatCost = step.matCost,
-                totalSellBackVendor = step.sellBackVendor or 0,
-                totalSellBackAH = step.sellBackAH or 0,
-                totalRecCost = step.recCost or 0,
-                recSource = step.recSource,
-                segmentTotalCost = step.stepTotalCost
-            }
+    local curr        = targetEnd
+    local seenRecipes = {}
+    while curr > targetStart do
+        local seg = segPath[curr]
+        if not seg then break end
+        local info = recInfos[seg.ri]
+        local rec  = info.rec
+        local t, e = seg.startT, curr
+        -- Totals for this segment from prefix arrays.
+        local totalMat    = (info.pMat[e]    or 0) - (info.pMat[t]    or 0)
+        local totalSV     = (info.pSellV[e]  or 0) - (info.pSellV[t]  or 0)
+        local totalSA     = (info.pSellA[e]  or 0) - (info.pSellA[t]  or 0)
+        local totalCrafts = (info.pCrafts[e] or 0) - (info.pCrafts[t] or 0)
+        -- Recipe cost once per name across entire route.
+        local recCostOnce = 0
+        if not seenRecipes[rec.name] then
+            recCostOnce = seg.recCostActual or 0
+            seenRecipes[rec.name] = true
         end
+        local useAH    = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+        local sellBack = useAH and totalSA or totalSV
+        table.insert(consolidatedRoute, 1, {
+            startSkill          = t,
+            endSkill            = e,
+            recipe              = rec,
+            totalCrafts         = totalCrafts,
+            totalMatCost        = totalMat,
+            totalSellBackVendor = totalSV,
+            totalSellBackAH     = totalSA,
+            totalRecCost        = recCostOnce,
+            recSource           = rec.acqSource,
+            segmentTotalCost    = recCostOnce + totalMat - sellBack,
+        })
+        curr = t
     end
-    if currentSegment then
-        table.insert(consolidatedRoute, currentSegment)
-    end
-    
+
     return consolidatedRoute, profName, targetStart, targetEnd, dp[targetEnd]
 end

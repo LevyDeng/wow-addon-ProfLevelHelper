@@ -130,7 +130,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 430)
+    f:SetSize(320, 455)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -148,12 +148,25 @@ function L.OpenOptions()
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
 
+    -- ScrollFrame so options content can scroll when it doesn't fit
+    local scroll = f.optionsScroll or CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 12, -12)
+    scroll:SetPoint("BOTTOMRIGHT", -32, 58)
+    f.optionsScroll = scroll
+    local content = f.optionsScrollChild
+    if not content then
+        content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(260, 480)
+        scroll:SetScrollChild(content)
+        f.optionsScrollChild = content
+    end
+
     local title = f.title or f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16)
     title:SetText("ProfLevelHelper (设置选项)")
     f.title = title
 
-    local scanBtn = f.scanBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    local scanBtn = f.scanBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     scanBtn:SetSize(120, 22)
     scanBtn:SetPoint("TOPLEFT", 24, -40)
     scanBtn:SetText("全量扫描拍卖行")
@@ -164,7 +177,7 @@ function L.OpenOptions()
     f.scanBtn = scanBtn
     L.ScanAHButton = scanBtn
 
-    local cb = f.checkHoliday or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    local cb = f.checkHoliday or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cb:SetPoint("TOPLEFT", 24, -70)
     cb:SetChecked(ProfLevelHelperDB.IncludeHolidayRecipes)
     cb:SetScript("OnClick", function()
@@ -178,11 +191,11 @@ function L.OpenOptions()
     cb.label = cbLabel
 
     -- Input Start
-    local startLabel = f.startLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local startLabel = f.startLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     startLabel:SetPoint("TOPLEFT", 24, -110)
     startLabel:SetText("规划起点 (当前等级):")
     f.startLabel = startLabel
-    local startInput = f.startInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    local startInput = f.startInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
     startInput:SetSize(40, 20)
     startInput:SetPoint("LEFT", startLabel, "RIGHT", 10, 0)
     startInput:SetAutoFocus(false)
@@ -198,11 +211,11 @@ function L.OpenOptions()
     f.startInput = startInput
 
     -- Input End
-    local endLabel = f.endLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local endLabel = f.endLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     endLabel:SetPoint("TOPLEFT", 24, -140)
     endLabel:SetText("规划终点 (目标满级):")
     f.endLabel = endLabel
-    local endInput = f.endInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    local endInput = f.endInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
     endInput:SetSize(40, 20)
     endInput:SetPoint("LEFT", endLabel, "RIGHT", 10, 0)
     endInput:SetAutoFocus(false)
@@ -218,11 +231,11 @@ function L.OpenOptions()
     f.endInput = endInput
 
     -- Input Outlier Percent
-    local pctLabel = f.pctLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local pctLabel = f.pctLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     pctLabel:SetPoint("TOPLEFT", 24, -170)
     pctLabel:SetText("异常低价过滤比例 (%):")
     f.pctLabel = pctLabel
-    local pctInput = f.pctInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    local pctInput = f.pctInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
     pctInput:SetSize(40, 20)
     pctInput:SetPoint("LEFT", pctLabel, "RIGHT", 10, 0)
     pctInput:SetAutoFocus(false)
@@ -244,11 +257,11 @@ function L.OpenOptions()
     f.pctInput = pctInput
 
     -- Min AH quantity for materials (only consider materials with at least this many on AH)
-    local minQtyLabel = f.minQtyLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local minQtyLabel = f.minQtyLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     minQtyLabel:SetPoint("TOPLEFT", 24, -200)
     minQtyLabel:SetText("材料在拍卖行中的最小存在数量:")
     f.minQtyLabel = minQtyLabel
-    local minQtyInput = f.minQtyInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    local minQtyInput = f.minQtyInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
     minQtyInput:SetSize(50, 20)
     minQtyInput:SetPoint("LEFT", minQtyLabel, "RIGHT", 10, 0)
     minQtyInput:SetAutoFocus(false)
@@ -264,11 +277,11 @@ function L.OpenOptions()
     f.minQtyInput = minQtyInput
 
     -- Titan Fragment: value per fragment (copper), default 8 silver
-    local fragLabel = f.fragLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local fragLabel = f.fragLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     fragLabel:SetPoint("TOPLEFT", 24, -230)
     fragLabel:SetText("泰坦碎片单价(铜):")
     f.fragLabel = fragLabel
-    local fragInput = f.fragInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    local fragInput = f.fragInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
     fragInput:SetSize(60, 20)
     fragInput:SetPoint("LEFT", fragLabel, "RIGHT", 10, 0)
     fragInput:SetAutoFocus(false)
@@ -284,11 +297,11 @@ function L.OpenOptions()
     f.fragInput = fragInput
 
     -- Sell-back method: vendor or AH (affects net cost calculation)
-    local sellBackLabel = f.sellBackLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local sellBackLabel = f.sellBackLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sellBackLabel:SetPoint("TOPLEFT", 24, -255)
     sellBackLabel:SetText("回血方式:")
     f.sellBackLabel = sellBackLabel
-    local cbVendor = f.cb_sellBackVendor or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    local cbVendor = f.cb_sellBackVendor or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cbVendor:SetPoint("LEFT", sellBackLabel, "RIGHT", 8, 0)
     cbVendor:SetChecked(ProfLevelHelperDB.SellBackMethod ~= "ah")
     cbVendor:SetScript("OnClick", function()
@@ -300,7 +313,7 @@ function L.OpenOptions()
     local lblV = cbVendor:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     lblV:SetPoint("LEFT", cbVendor, "RIGHT", 2, 0)
     lblV:SetText("卖店")
-    local cbAH = f.cb_sellBackAH or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    local cbAH = f.cb_sellBackAH or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cbAH:SetPoint("LEFT", lblV, "RIGHT", 16, 0)
     cbAH:SetChecked(ProfLevelHelperDB.SellBackMethod == "ah")
     cbAH:SetScript("OnClick", function()
@@ -313,10 +326,27 @@ function L.OpenOptions()
     lblA:SetPoint("LEFT", cbAH, "RIGHT", 2, 0)
     lblA:SetText("拍卖")
 
+    -- AH sell-back blacklist: show count and "View blacklist" button (clear is in detail UI)
+    local blLabel = f.blLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    blLabel:SetPoint("TOPLEFT", 24, -272)
+    blLabel:SetText("AH回血黑名单:")
+    f.blLabel = blLabel
+    local blCountText = f.blCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    blCountText:SetPoint("LEFT", blLabel, "RIGHT", 6, 0)
+    f.blCountText = blCountText
+    local blDetailBtn = f.blDetailBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    blDetailBtn:SetSize(90, 20)
+    blDetailBtn:SetPoint("LEFT", blCountText, "RIGHT", 12, 0)
+    blDetailBtn:SetText("查看黑名单")
+    blDetailBtn:SetScript("OnClick", function()
+        if L.ShowAHSellBackBlacklistDetail then L.ShowAHSellBackBlacklistDetail() end
+    end)
+    f.blDetailBtn = blDetailBtn
+
     -- Source Filters
-    local yOfs = -285
+    local yOfs = -302
     local function createCheckbox(key, text)
-        local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+        local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
         if ProfLevelHelperDB[key] == nil then ProfLevelHelperDB[key] = false end
         cb:SetChecked(ProfLevelHelperDB[key])
@@ -354,7 +384,121 @@ function L.OpenOptions()
         f.cb_sellBackVendor:SetChecked(ProfLevelHelperDB.SellBackMethod ~= "ah")
         f.cb_sellBackAH:SetChecked(ProfLevelHelperDB.SellBackMethod == "ah")
     end
+    local nBl = 0
+    if ProfLevelHelperDB.AHSellBackBlacklist then
+        for _ in pairs(ProfLevelHelperDB.AHSellBackBlacklist) do nBl = nBl + 1 end
+    end
+    if f.blCountText then f.blCountText:SetText("已屏蔽 " .. nBl .. " 种") end
     L.UpdateScanButtonState()
+    f:Show()
+end
+
+-- Blacklist detail UI: list each blacklisted item with [Remove], and [Clear all] button
+function L.ShowAHSellBackBlacklistDetail()
+    local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
+    local list = {}
+    for id in pairs(bl) do list[#list + 1] = id end
+    table.sort(list)
+
+    local f = L.BlacklistDetailFrame
+    if not f then
+        f = CreateFrame("Frame", "ProfLevelHelperBlacklistDetail", UIParent, "BackdropTemplate")
+        L.BlacklistDetailFrame = f
+        f:SetSize(340, 380)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
+        f:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -16)
+        title:SetText("黑名单详情 (AH回血)")
+        f.title = title
+
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 12, -44)
+        scroll:SetPoint("BOTTOMRIGHT", -32, 52)
+        f.scroll = scroll
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(280, 1)
+        scroll:SetScrollChild(content)
+        f.scrollContent = content
+
+        local clearBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        clearBtn:SetSize(100, 22)
+        clearBtn:SetPoint("BOTTOM", -60, 16)
+        clearBtn:SetText("清空黑名单")
+        clearBtn:SetScript("OnClick", function()
+            ProfLevelHelperDB.AHSellBackBlacklist = {}
+            local opt = L.OptionsFrame
+            if opt and opt.blCountText then opt.blCountText:SetText("已屏蔽 0 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowAHSellBackBlacklistDetail()
+        end)
+        f.clearBtn = clearBtn
+
+        local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        closeBtn:SetSize(80, 22)
+        closeBtn:SetPoint("BOTTOM", 60, 16)
+        closeBtn:SetText("关闭")
+        closeBtn:SetScript("OnClick", function() f:Hide() end)
+        f.closeBtn = closeBtn
+    end
+
+    local content = f.scrollContent
+    content:SetHeight(1)
+    for k, row in pairs(content) do
+        if type(row) == "table" and row.Hide then row:Hide() end
+    end
+
+    local ROW_H = 22
+    local y = 0
+    for _, itemID in ipairs(list) do
+        local name = GetItemInfo(itemID) or ("Item " .. tostring(itemID))
+        local row = content["row_" .. itemID]
+        if not row then
+            row = CreateFrame("Frame", nil, content)
+            row:SetHeight(ROW_H)
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.label:SetPoint("LEFT", 8, 0)
+            row.label:SetPoint("RIGHT", -70, 0)
+            row.label:SetWordWrap(false)
+            row.btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.btn:SetSize(50, 18)
+            row.btn:SetPoint("RIGHT", 0, 0)
+            row.btn:SetText("移除")
+            content["row_" .. itemID] = row
+        end
+        row:SetPoint("TOPLEFT", 0, -y)
+        row:SetPoint("TOPRIGHT", 0, -y)
+        row.label:SetText(name)
+        row.btn:SetScript("OnClick", function()
+            if ProfLevelHelperDB.AHSellBackBlacklist then ProfLevelHelperDB.AHSellBackBlacklist[itemID] = nil end
+            local nBl = 0
+            if ProfLevelHelperDB.AHSellBackBlacklist then
+                for _ in pairs(ProfLevelHelperDB.AHSellBackBlacklist) do nBl = nBl + 1 end
+            end
+            local opt = L.OptionsFrame
+            if opt and opt.blCountText then opt.blCountText:SetText("已屏蔽 " .. nBl .. " 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowAHSellBackBlacklistDetail()
+        end)
+        row:Show()
+        y = y + ROW_H
+    end
+    content:SetHeight(math.max(1, y))
+    f.clearBtn:SetShown(#list > 0)
     f:Show()
 end
 
@@ -364,180 +508,220 @@ function L.ShowResultList()
     local startSkill = ProfLevelHelperDB.TargetSkillStart or pCurr or 1
     local endSkill = ProfLevelHelperDB.TargetSkillEnd or pMax or 350
 
-    -- Lua has no try/catch; pcall(f) returns ok, ... or false, errmsg.
-    local ok, a, b, c, d, e = pcall(function()
-        return L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
-    end)
-    if not ok then
-        L.Print("|cffff0000ProfLevelHelper 错误: " .. tostring(a) .. "|r")
+    -- Collect all item IDs from the recipe list so we can preload them via
+    -- Item:ContinueOnItemLoad before calculating, ensuring GetItemInfo is
+    -- populated for every item and the route result is consistent on every run.
+    local recipes0 = L.GetRecipeList(includeHoliday)
+    if not recipes0 then
+        L.Print("请先打开专业技能窗口。")
         return
     end
-    local route, profName, actualStart, actualEnd, totalCost = a, b, c, d, e
-    if not route or #route == 0 then
-        local s = actualStart or startSkill or "?"
-        local e = actualEnd or endSkill or "?"
-        L.Print(profName and ("无法找到一条从 " .. s .. " 到 ".. e .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
-        return
+    local ids, seen = {}, {}
+    local function collectID(id)
+        if id and not seen[id] then seen[id] = true; ids[#ids + 1] = id end
+    end
+    for _, rec in ipairs(recipes0) do
+        collectID(rec.createdItemID)
+        for _, r in ipairs(rec.reagents or {}) do collectID(r.itemID) end
+        for _, rid in ipairs(rec.recipeItemIDs or {}) do collectID(rid) end
     end
 
-    if not ProfLevelHelperDB.AHPrices or next(ProfLevelHelperDB.AHPrices) == nil then
-        L.Print("|cffff2222警告：尚未扫描拍卖行物价，所有的消耗计算可能存在极大的误差（按 NPC 售出价格预估），请尽快去主城拍卖行点击扫描一次！|r")
-    end
-
-    if not L.ResultFrame then
-        local f = CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
-        L.ResultFrame = f
-        f:SetSize(600, 480)
-        f:SetPoint("CENTER")
-        f:SetFrameStrata("DIALOG")
-        f:SetBackdrop({
-            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true, tileSize = 32, edgeSize = 32,
-            insets = { left = 11, right = 12, top = 12, bottom = 11 },
-        })
-        f:SetBackdropColor(0, 0, 0, 0.9)
-        f:EnableMouse(true)
-        f:SetMovable(true)
-        f:RegisterForDrag("LeftButton")
-        f:SetScript("OnDragStart", f.StartMoving)
-        f:SetScript("OnDragStop", f.StopMovingOrSizing)
-
-        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        title:SetPoint("TOP", 0, -12)
-        f.title = title
-
-        local scroll = CreateFrame("ScrollFrame", "ProfLevelHelperResultScroll", f, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 20, -36)
-        scroll:SetPoint("BOTTOMRIGHT", -36, 46) -- give bottom room for buttons
-        f.scroll = scroll
-
-        local content = CreateFrame("Frame", nil, scroll)
-        content:SetSize(scroll:GetWidth() - 20, 1)
-        scroll:SetScrollChild(content)
-        f.content = content
-        
-        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-        close:SetSize(100, 22)
-        close:SetPoint("BOTTOMRIGHT", -20, 12)
-        close:SetText("关闭")
-        close:SetScript("OnClick", function() f:Hide() end)
-        f.closeBtn = close
-
-        local exportBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-        exportBtn:SetSize(100, 22)
-        exportBtn:SetPoint("BOTTOM", 0, 12)
-        exportBtn:SetText("复制到剪贴板")
-        exportBtn:SetScript("OnClick", function() 
-            if L.ShowExportFrame then L.ShowExportFrame() end 
+    L.EnsureItemsLoaded(ids, function()
+        -- Lua has no try/catch; pcall(f) returns ok, ... or false, errmsg.
+        local ok, a, b, c, d, e = pcall(function()
+            return L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
         end)
-        f.exportBtn = exportBtn
-
-        local optionsBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-        optionsBtn:SetSize(100, 22)
-        optionsBtn:SetPoint("BOTTOMLEFT", 20, 12)
-        optionsBtn:SetText("更改选项")
-        optionsBtn:SetScript("OnClick", function() L.OpenOptions() end)
-        f.optionsBtn = optionsBtn
-    end
-
-    local f = L.ResultFrame
-
-    local function CopperToGold(c)
-        if type(c) ~= "number" or c == 0 then return "0 铜" end
-        c = math.floor(c + 0.5) -- 确保永远是整数
-        local g = math.floor(c / 10000)
-        local s = math.floor((c % 10000) / 100)
-        local co = math.floor(c % 100)
-        local str = ""
-        if g > 0 then str = str .. "|cffffdf00" .. g .. "金|r " end
-        if s > 0 or g > 0 then str = str .. "|cffc0c0c0" .. s .. "银|r " end
-        str = str .. "|cffb87333" .. co .. "铜|r"
-        return str
-    end
-
-    f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测花费 " .. CopperToGold(totalCost) .. ")") or "推荐列表")
-    local content = f.content
-    local scroll = f.scroll
-
-    -- Clear old lines if exist
-    if content.lines then
-        for _, g in ipairs(content.lines) do
-            g:Hide()
+        if not ok then
+            L.Print("|cffff0000ProfLevelHelper 错误: " .. tostring(a) .. "|r")
+            return
         end
-    end
-    content.lines = {}
+        local route, profName, actualStart, actualEnd, totalCost = a, b, c, d, e
+        if not route or #route == 0 then
+            local s = actualStart or startSkill or "?"
+            local e = actualEnd or endSkill or "?"
+            L.Print(profName and ("无法找到一条从 " .. s .. " 到 ".. e .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
+            return
+        end
 
-    local y = 0
-    for i, seg in ipairs(route) do
-        local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        table.insert(content.lines, line)
-        line:SetPoint("TOPLEFT", 0, -y)
-        line:SetJustifyH("LEFT")
-        
-        -- Build Reagents string
-        local reqStr = ""
-        local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
-        for _, r in ipairs(seg.recipe.reagents or {}) do
-            local itemName = r.name
-            if not itemName and r.itemID then
-                if alaAgent and alaAgent.item_name then
-                    itemName = alaAgent.item_name(r.itemID)
+        if not ProfLevelHelperDB.AHPrices or next(ProfLevelHelperDB.AHPrices) == nil then
+            L.Print("|cffff2222警告：尚未扫描拍卖行物价，所有的消耗计算可能存在极大的误差（按 NPC 售出价格预估），请尽快去主城拍卖行点击扫描一次！|r")
+        end
+
+        if not L.ResultFrame then
+            local f = CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
+            L.ResultFrame = f
+            f:SetSize(600, 480)
+            f:SetPoint("CENTER")
+            f:SetFrameStrata("DIALOG")
+            f:SetBackdrop({
+                bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                tile = true, tileSize = 32, edgeSize = 32,
+                insets = { left = 11, right = 12, top = 12, bottom = 11 },
+            })
+            f:SetBackdropColor(0, 0, 0, 0.9)
+            f:EnableMouse(true)
+            f:SetMovable(true)
+            f:RegisterForDrag("LeftButton")
+            f:SetScript("OnDragStart", f.StartMoving)
+            f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+            local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+            title:SetPoint("TOP", 0, -12)
+            f.title = title
+
+            local scroll = CreateFrame("ScrollFrame", "ProfLevelHelperResultScroll", f, "UIPanelScrollFrameTemplate")
+            scroll:SetPoint("TOPLEFT", 20, -36)
+            scroll:SetPoint("BOTTOMRIGHT", -36, 46)
+            f.scroll = scroll
+
+            local content = CreateFrame("Frame", nil, scroll)
+            content:SetSize(scroll:GetWidth() - 20, 1)
+            scroll:SetScrollChild(content)
+            f.content = content
+
+            local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+            close:SetSize(100, 22)
+            close:SetPoint("BOTTOMRIGHT", -20, 12)
+            close:SetText("关闭")
+            close:SetScript("OnClick", function() f:Hide() end)
+            f.closeBtn = close
+
+            local exportBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+            exportBtn:SetSize(100, 22)
+            exportBtn:SetPoint("BOTTOM", 0, 12)
+            exportBtn:SetText("复制到剪贴板")
+            exportBtn:SetScript("OnClick", function()
+                if L.ShowExportFrame then L.ShowExportFrame() end
+            end)
+            f.exportBtn = exportBtn
+
+            local optionsBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+            optionsBtn:SetSize(100, 22)
+            optionsBtn:SetPoint("BOTTOMLEFT", 20, 12)
+            optionsBtn:SetText("更改选项")
+            optionsBtn:SetScript("OnClick", function() L.OpenOptions() end)
+            f.optionsBtn = optionsBtn
+        end
+
+        local f = L.ResultFrame
+
+        local function CopperToGold(c)
+            if type(c) ~= "number" or c == 0 then return "0 铜" end
+            c = math.floor(c + 0.5)
+            local g = math.floor(c / 10000)
+            local s = math.floor((c % 10000) / 100)
+            local co = math.floor(c % 100)
+            local str = ""
+            if g > 0 then str = str .. "|cffffdf00" .. g .. "金|r " end
+            if s > 0 or g > 0 then str = str .. "|cffc0c0c0" .. s .. "银|r " end
+            str = str .. "|cffb87333" .. co .. "铜|r"
+            return str
+        end
+
+        f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测花费 " .. CopperToGold(totalCost) .. ")") or "推荐列表")
+        local content = f.content
+        local scroll = f.scroll
+
+        if content.lines then
+            for _, g in ipairs(content.lines) do g:Hide() end
+        end
+        if content.segmentBtns then
+            for _, b in ipairs(content.segmentBtns) do b:Hide() end
+        end
+        content.lines = {}
+        content.segmentBtns = {}
+
+        local y = 0
+        for i, seg in ipairs(route) do
+            local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            table.insert(content.lines, line)
+            line:SetPoint("TOPLEFT", 0, -y)
+            line:SetJustifyH("LEFT")
+
+            local reqStr = ""
+            local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+            for _, r in ipairs(seg.recipe.reagents or {}) do
+                local itemName = r.name
+                if not itemName and r.itemID then
+                    if alaAgent and alaAgent.item_name then
+                        itemName = alaAgent.item_name(r.itemID)
+                    end
+                    if not itemName then
+                        local iname = GetItemInfo(r.itemID)
+                        if iname then itemName = iname end
+                    end
                 end
                 if not itemName then
-                    local iname = GetItemInfo(r.itemID)
-                    if iname then itemName = iname end
+                    itemName = "ID:" .. tostring(r.itemID)
                 end
+                local totQty = math.ceil(r.count * seg.totalCrafts)
+                reqStr = reqStr .. itemName .. "*" .. totQty .. " "
             end
-            if not itemName then
-                itemName = "ID:" .. tostring(r.itemID)
+            if reqStr == "" then reqStr = "无或由材料制成" end
+
+            local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
+            if not seg.recipe.isKnown then
+                rNameC = "|cffff2222[未学]|r" .. rNameC .. " |cff888888(获取: " .. (seg.recSource or "未知") .. ")|r"
+            else
+                rNameC = "|cff22ff22[已学]|r" .. rNameC
             end
-            
-            local totQty = math.ceil(r.count * seg.totalCrafts)
-            reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+
+            line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作: %s | 回血(卖NPC: %s | AH: %s) | 净花费: %s\n  材料: %s"):format(
+                seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts,
+                CopperToGold(seg.totalRecCost or 0), CopperToGold(seg.totalMatCost or 0),
+                CopperToGold(seg.totalSellBackVendor or 0), CopperToGold(seg.totalSellBackAH or 0), CopperToGold(seg.segmentTotalCost or 0),
+                reqStr))
+            line:SetWidth(scroll:GetWidth() - 24)
+            line:Show()
+
+            local currentHeight = line:GetStringHeight()
+            if not currentHeight or currentHeight == 0 then currentHeight = 38 end
+            if ProfLevelHelperDB.SellBackMethod == "ah" and seg.recipe.createdItemID then
+                local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
+                local isBlacklisted = bl[seg.recipe.createdItemID]
+                local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+                btn:SetSize(78, 18)
+                btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 82, -y)
+                btn:SetText(isBlacklisted and "[改回AH回血]" or "[不按AH回血]")
+                btn.itemID = seg.recipe.createdItemID
+                btn:SetScript("OnClick", function()
+                    local id = btn.itemID
+                    if id and ProfLevelHelperDB.AHSellBackBlacklist then
+                        if isBlacklisted then
+                            ProfLevelHelperDB.AHSellBackBlacklist[id] = nil
+                        else
+                            ProfLevelHelperDB.AHSellBackBlacklist[id] = true
+                        end
+                        L.ShowResultList()
+                    end
+                end)
+                btn:Show()
+                table.insert(content.segmentBtns, btn)
+            end
+            y = y + currentHeight + 16
         end
-        if reqStr == "" then reqStr = "无或由材料制成" end
 
-        local rNameC = seg.recipe.name or "?"
-        if not seg.recipe.isKnown then 
-            rNameC = "|cffff2222[未学]|r" .. rNameC .. " |cff888888(获取: " .. (seg.recSource or "未知") .. ")|r"
-        else 
-            rNameC = "|cff22ff22[已学]|r" .. rNameC 
-        end
+        local sumLine = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+        table.insert(content.lines, sumLine)
+        sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
+        sumLine:SetJustifyH("LEFT")
+        sumLine:SetText("============\n总计预计花费: " .. CopperToGold(totalCost) .. "\n============")
+        sumLine:Show()
 
-        line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作: %s | 回血(卖NPC: %s | AH: %s) | 净花费: %s\n  材料: %s"):format(
-            seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts,
-            CopperToGold(seg.totalRecCost or 0), CopperToGold(seg.totalMatCost or 0),
-            CopperToGold(seg.totalSellBackVendor or 0), CopperToGold(seg.totalSellBackAH or 0), CopperToGold(seg.segmentTotalCost or 0),
-            reqStr))
-        line:SetWidth(scroll:GetWidth() - 24)
-        line:Show()
-        
-        local currentHeight = line:GetStringHeight()
-        if not currentHeight or currentHeight == 0 then currentHeight = 38 end
-        y = y + currentHeight + 16
-    end
+        y = y + 80
+        content:SetHeight(y)
 
-    -- Add a big Total Cost text at the bottom
-    local sumLine = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    table.insert(content.lines, sumLine)
-    sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
-    sumLine:SetJustifyH("LEFT")
-    sumLine:SetText("============\n总计预计花费: " .. CopperToGold(totalCost) .. "\n============")
-    sumLine:Show()
+        L.CurrentRouteData = {
+            route = route,
+            startS = actualStart,
+            endS = actualEnd,
+            totalCost = totalCost,
+            profName = profName
+        }
 
-    y = y + 80
-    content:SetHeight(y)
-
-    L.CurrentRouteData = {
-        route = route,
-        startS = actualStart,
-        endS = actualEnd,
-        totalCost = totalCost,
-        profName = profName
-    }
-
-    f:Show()
+        f:Show()
+    end, 3.0)
 end
 
 function L.ShowExportFrame()
@@ -599,7 +783,7 @@ function L.ShowExportFrame()
     local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
 
     for _, seg in ipairs(data.route) do
-        local rNameC = seg.recipe.name or "?"
+        local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
         local reqStr = ""
         for _, r in ipairs(seg.recipe.reagents or {}) do
             local itemName = r.name

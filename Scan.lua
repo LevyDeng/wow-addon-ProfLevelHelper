@@ -60,6 +60,8 @@ function L.StartAHScan()
     db.AHPrices = {}
     db.AHQty = {}
     db.NameToID = {}
+    db.IDToName = {}
+    db.IDToName = {}
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
@@ -124,8 +126,12 @@ local function processItemData(i, itemId, name, count, buyout)
     
     local db = ProfLevelHelperDB
     db.NameToID = db.NameToID or {}
+    db.IDToName = db.IDToName or {}
 
-    if name and name ~= "" then db.NameToID[name] = itemId end
+    if name and name ~= "" then
+        db.NameToID[name] = itemId
+        db.IDToName[itemId] = name
+    end
     
     local unitPrice = buyout / count
     
