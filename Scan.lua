@@ -53,6 +53,13 @@ function L.StartAHScan()
     waitingItems = {}
     processedIndexes = {}
     globalUpdatedCount = 0
+    L.TempAHData = {} -- 用来暂存物品的所有单价与数量排列
+
+    -- Full rescan replaces previous data so items no longer on AH are not used in routes.
+    local db = ProfLevelHelperDB
+    db.AHPrices = {}
+    db.AHQty = {}
+    db.NameToID = {}
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
@@ -116,20 +123,22 @@ local function processItemData(i, itemId, name, count, buyout)
     if not itemId or itemId <= 0 or not buyout or buyout <= 0 or not count or count <= 0 then return false end
     
     local db = ProfLevelHelperDB
-    db.AHPrices = db.AHPrices or {}
     db.NameToID = db.NameToID or {}
 
     if name and name ~= "" then db.NameToID[name] = itemId end
     
-    local unitPrice = math.floor(buyout / count + 0.5)
-    local prev = db.AHPrices[itemId]
-    local updated = false
-    if not prev or unitPrice < prev then
-        db.AHPrices[itemId] = unitPrice
-        updated = true
+    local unitPrice = buyout / count
+    
+    local itemData = L.TempAHData[itemId]
+    if not itemData then
+        itemData = { totalQ = 0, listings = {} }
+        L.TempAHData[itemId] = itemData
     end
+    itemData.totalQ = itemData.totalQ + count
+    table.insert(itemData.listings, { price = unitPrice, count = count })
+    
     processedIndexes[i] = true
-    return updated
+    return true
 end
 
 function L.ProcessChunk(startIndex, perFrame)
@@ -238,11 +247,65 @@ function L.ProcessChunk(startIndex, perFrame)
 end
 
 function L.FinishScan()
+    local db = ProfLevelHelperDB
+    db.AHPrices = db.AHPrices or {}
+    db.AHQty = db.AHQty or {}
+
+    local pct = db.IgnoredOutlierPercent
+    if pct == nil then pct = 0.10 end -- default: ignore bottom 10% (outlier low prices)
+    if pct > 1 then pct = pct / 100 end -- normalize if saved as e.g. 10 instead of 0.10
+    pct = math.max(0, math.min(1, pct))
+    
+    L.Print("扫描完成，正在利用百分位过滤算法结算各物品基准价...")
+    globalUpdatedCount = 0
+    
+    if L.TempAHData then
+        for itemId, data in pairs(L.TempAHData) do
+            if not data.listings or #data.listings == 0 then
+                -- skip items with no valid listings (defensive)
+            else
+                -- sort by unit price ascending
+                table.sort(data.listings, function(a, b) return (a.price or 0) < (b.price or 0) end)
+                
+                local firstPrice = data.listings[1] and data.listings[1].price
+                if firstPrice == nil or type(firstPrice) ~= "number" then
+                    -- skip invalid first listing
+                else
+                    -- benchmark: price at (pct * totalQ) quantity percentile
+                    local totalQ = data.totalQ or 0
+                    if totalQ <= 0 then totalQ = 1 end
+                    local targetQ = math.max(1, math.ceil(totalQ * pct))
+                    local accum = 0
+                    local finalPrice = firstPrice
+                    
+                    for _, list in ipairs(data.listings) do
+                        accum = accum + (list.count or 0)
+                        if list.price ~= nil and type(list.price) == "number" and accum >= targetQ then
+                            finalPrice = list.price
+                            break
+                        end
+                    end
+                    
+                    finalPrice = math.floor(finalPrice + 0.5)
+                    if type(finalPrice) == "number" and finalPrice >= 0 then
+                        local prev = db.AHPrices[itemId]
+                        if not prev or finalPrice ~= prev then
+                            db.AHPrices[itemId] = finalPrice
+                            globalUpdatedCount = globalUpdatedCount + 1
+                        end
+                        db.AHQty[itemId] = totalQ
+                    end
+                end
+            end
+        end
+    end
+    L.TempAHData = nil
+    
     L.AHScanRunning = false
     L.HideScanProgress()
     L.UpdateScanButtonState()
-    local db = ProfLevelHelperDB
-    L.Print("全量扫描已经圆满结束！当前一共记录了 " .. L.TableCount(db.AHPrices) .. " 种物品的价格 (本次更新或新增: " .. globalUpdatedCount .. " 条记录)。")
+    L.Print(string.format("全量扫描并结算圆满结束！当前记录了 %d 种物品的价格 (新增/更新: %d, 极低价过滤比例: %d%%)。", 
+        L.TableCount(db.AHPrices), globalUpdatedCount, math.floor((pct or 0) * 100)))
 end
 
 function L.TableCount(t)

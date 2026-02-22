@@ -41,11 +41,13 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
                 source = "拍卖行购买"
             end
         end
+        -- Only use explicitly recorded vendor prices (populated when the user visits an NPC vendor).
+        -- GetItemInfo's vendor price field is the item's sell value (what you get selling to a vendor),
+        -- NOT the NPC buy price. Most recipe scrolls cannot be bought from vendors at all, so using
+        -- sell price * 4 as a proxy produces an incorrect tiny price that overrides the real AH price
+        -- on the second call (once GetItemInfo is cached), causing the same recipe to flip from
+        -- "拍卖行购买" to "NPC 购买" between calls.
         local vendorPrice = db.VendorPrices and db.VendorPrices[id]
-        if not vendorPrice and GetItemInfo then
-            local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(id)
-            if vp and vp > 0 then vendorPrice = vp * 4 end
-        end
         if vendorPrice and vendorPrice > 0 then
             if cost == nil or vendorPrice < cost then
                 cost = vendorPrice

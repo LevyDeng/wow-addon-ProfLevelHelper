@@ -130,7 +130,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 370)
+    f:SetSize(320, 400)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -229,7 +229,12 @@ function L.OpenOptions()
     pctInput:SetNumeric(true)
     local currPct = ProfLevelHelperDB.IgnoredOutlierPercent
     if currPct == nil then currPct = 0.10 end
-    pctInput:SetText(tostring(math.floor(currPct * 100)))
+    if currPct > 1 then
+        ProfLevelHelperDB.IgnoredOutlierPercent = currPct / 100
+        currPct = currPct / 100
+    end
+    currPct = math.max(0, math.min(100, math.floor(currPct * 100)))
+    pctInput:SetText(tostring(currPct))
     pctInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
         if val then 
@@ -238,8 +243,28 @@ function L.OpenOptions()
     end)
     f.pctInput = pctInput
 
+    -- Min AH quantity for materials (only consider materials with at least this many on AH)
+    local minQtyLabel = f.minQtyLabel or f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    minQtyLabel:SetPoint("TOPLEFT", 24, -200)
+    minQtyLabel:SetText("材料在拍卖行中的最小存在数量:")
+    f.minQtyLabel = minQtyLabel
+    local minQtyInput = f.minQtyInput or CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    minQtyInput:SetSize(50, 20)
+    minQtyInput:SetPoint("LEFT", minQtyLabel, "RIGHT", 10, 0)
+    minQtyInput:SetAutoFocus(false)
+    minQtyInput:SetNumeric(true)
+    minQtyInput:SetText(tostring(ProfLevelHelperDB.MinAHQuantity or 50))
+    minQtyInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val and val >= 0 then
+            ProfLevelHelperDB.MinAHQuantity = val
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end
+    end)
+    f.minQtyInput = minQtyInput
+
     -- Source Filters
-    local yOfs = -200
+    local yOfs = -230
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
@@ -264,7 +289,7 @@ function L.OpenOptions()
     createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
 
     local feedback = f.feedbackText or f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    feedback:SetPoint("BOTTOM", 0, 42)
+    feedback:SetPoint("BOTTOM", 0, 38)
     feedback:SetText("反馈邮箱: ptrees@126.com")
     f.feedbackText = feedback
 
@@ -281,14 +306,15 @@ end
 
 function L.ShowResultList()
     local includeHoliday = ProfLevelHelperDB.IncludeHolidayRecipes
-    
     local _, pCurr, pMax = L.GetCurrentProfessionSkill()
     local startSkill = ProfLevelHelperDB.TargetSkillStart or pCurr or 1
     local endSkill = ProfLevelHelperDB.TargetSkillEnd or pMax or 350
-    
+
     local route, profName, actualStart, actualEnd, totalCost = L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
     if not route or #route == 0 then
-        L.Print(profName and ("无法找到一条从 " .. actualStart .. " 到 ".. actualEnd .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
+        local s = actualStart or startSkill or "?"
+        local e = actualEnd or endSkill or "?"
+        L.Print(profName and ("无法找到一条从 " .. s .. " 到 ".. e .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
         return
     end
 
@@ -357,6 +383,7 @@ function L.ShowResultList()
 
     local function CopperToGold(c)
         if type(c) ~= "number" or c == 0 then return "0 铜" end
+        c = math.floor(c + 0.5) -- 确保永远是整数
         local g = math.floor(c / 10000)
         local s = math.floor((c % 10000) / 100)
         local co = math.floor(c % 100)

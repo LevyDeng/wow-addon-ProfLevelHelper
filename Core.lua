@@ -34,61 +34,59 @@ function L.GetRecipeList(includeHoliday)
     includeHoliday = includeHoliday == nil and ProfLevelHelperDB.IncludeHolidayRecipes or includeHoliday
 
     local list = {}
-    local knownRecipes = {}
     local num = GetNumTradeSkills and GetNumTradeSkills() or 0
-    for i = 1, num do
-        local name = GetTradeSkillInfo(i)
-        if name then knownRecipes[name] = true end
-    end
 
     local ala = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
     if ala and ala.get_pid_by_pname then
         local pid = ala.get_pid_by_pname(profName)
-        if pid then
-            local sids = ala.get_list_by_pid(pid)
-            if sids then
-                for _, sid in ipairs(sids) do
-                    local name = GetSpellInfo(sid)
-                    if name and (includeHoliday or not L.IsHolidayRecipe(name, profName)) then
-                        local learn, yellow, green, grey = ala.get_difficulty_rank_list_by_sid(sid)
-                        local r_ids, r_counts = ala.get_reagents_by_sid(sid)
-                        local info = ala.get_info_by_sid(sid)
-                        
-                        if learn and grey then
-                            local reagents = {}
-                            if r_ids and r_counts then
-                                for idx, rid in ipairs(r_ids) do
-                                    local rCount = r_counts[idx] or 1
-                                    reagents[#reagents + 1] = { itemID = rid, count = rCount }
-                                end
+        local sids = pid and ala.get_list_by_pid(pid)
+        if pid and sids then
+            for _, sid in ipairs(sids) do
+                local name = GetSpellInfo(sid)
+                if name and (includeHoliday or not L.IsHolidayRecipe(name, profName)) then
+                    local learn, yellow, green, grey = ala.get_difficulty_rank_list_by_sid(sid)
+                    local r_ids, r_counts = ala.get_reagents_by_sid(sid)
+                    local info = ala.get_info_by_sid(sid)
+                    
+                    if learn and grey then
+                        local reagents = {}
+                        if r_ids and r_counts then
+                            for idx, rid in ipairs(r_ids) do
+                                local rCount = r_counts[idx] or 1
+                                reagents[#reagents + 1] = { itemID = rid, count = rCount }
                             end
-                            
-                            local isTrainer = info and info[14]
-                            local trainPrice = info and info[15]
-                            local recipeItemIDs = info and info[16]
-                            
-                            list[#list + 1] = {
-                                name = name,
-                                sid = sid,
-                                learn = learn,
-                                yellow = yellow,
-                                green = green,
-                                grey = grey,
-                                reagents = reagents,
-                                isTrainer = isTrainer,
-                                trainPrice = trainPrice,
-                                recipeItemIDs = recipeItemIDs,
-                                isKnown = knownRecipes[name] or false,
-                                index = sid,
-                            }
                         end
+                        
+                        local isTrainer = info and info[14]
+                        local trainPrice = info and info[15]
+                        local recipeItemIDs = nil
+                        if info and info[16] and type(info[16]) == "table" then
+                            recipeItemIDs = {}
+                            for _, rid in ipairs(info[16]) do
+                                recipeItemIDs[#recipeItemIDs + 1] = rid
+                            end
+                        end
+                        
+                        list[#list + 1] = {
+                            name = name,
+                            sid = sid,
+                            learn = learn,
+                            yellow = yellow,
+                            green = green,
+                            grey = grey,
+                            reagents = reagents,
+                            isTrainer = isTrainer,
+                            trainPrice = trainPrice,
+                            recipeItemIDs = recipeItemIDs,
+                            isKnown = (IsSpellKnown and IsSpellKnown(sid)) or false,
+                            index = sid,
+                        }
                     end
                 end
-                return list, profName, currentSkill, maxSkill or 450
             end
+            return list, profName, currentSkill, maxSkill or 450
         end
     end
-
     -- Fallback to native scan
     for i = 1, num do
         local name, skillType, numAvailable, _, _, numSkillUps = GetTradeSkillInfo(i)
@@ -179,6 +177,14 @@ function L.CraftCost(reagents)
     return cost
 end
 
+-- Return total quantity of item on AH at scan time (0 if not scanned or not on AH).
+function L.GetAHQuantity(itemId)
+    if not itemId then return 0 end
+    local db = ProfLevelHelperDB
+    if not db or not db.AHQty then return 0 end
+    return db.AHQty[itemId] or 0
+end
+
 -- Resolve item name or id to price: AH then vendor. Returns copper.
 function L.GetItemPrice(itemNameOrLinkOrId)
     local id = type(itemNameOrLinkOrId) == "number" and itemNameOrLinkOrId or nil
@@ -209,11 +215,15 @@ end
 -- Calculate global cheapest route using Dynamic Programming (Shortest Path)
 function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local recipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
-    if not recipes or #recipes == 0 then return nil, profName, currentSkill end
+    if not recipes or #recipes == 0 then return nil, profName, currentSkill, currentSkill, 0 end
 
     targetStart = targetStart or currentSkill
     targetEnd = targetEnd or pMaxSkill
-    if targetStart >= targetEnd then return nil, profName, currentSkill end
+    L.Print(string.format("计算路线: %d -> %d (%s)", targetStart, targetEnd, tostring(profName)))
+    if targetStart >= targetEnd then 
+        L.Print("错误: 起点等级已大于或等于终点等级。")
+        return nil, profName, targetStart, targetEnd, 0 
+    end
     
     -- DP array storing min cost to reach a specific skill point
     local dp = {}
@@ -239,20 +249,47 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         rec.acqSource = rSource or "未知来源"
         
         local allowed = true
+        local db = ProfLevelHelperDB
         if not rec.isKnown then
-            local db = ProfLevelHelperDB
-            if rec.acqSource == "训练师学习" and not db.IncludeSourceTrainer then allowed = false end
-            if rec.acqSource == "拍卖行购买" and not db.IncludeSourceAH then allowed = false end
-            if rec.acqSource == "NPC 购买" and not db.IncludeSourceVendor then allowed = false end
-            if rec.acqSource:match("任务") and not db.IncludeSourceQuest then allowed = false end
-            if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and not db.IncludeSourceUnknown then allowed = false end
+            if rec.acqSource == "训练师学习" and db.IncludeSourceTrainer == false then allowed = false end
+            if rec.acqSource == "拍卖行购买" and db.IncludeSourceAH == false then allowed = false end
+            if rec.acqSource == "NPC 购买" and db.IncludeSourceVendor == false then allowed = false end
+            if rec.acqSource:match("任务") and db.IncludeSourceQuest == false then allowed = false end
+            if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and db.IncludeSourceUnknown == false then allowed = false end
         end
-        
+        -- Exclude recipe if any material has no price in our data (would be treated as 0 and wrongly recommended).
+        if allowed then
+            for _, r in ipairs(rec.reagents or {}) do
+                local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+                if not id then
+                    allowed = false
+                    break
+                end
+                local hasPrice = (db.AHPrices and db.AHPrices[id]) or (db.VendorPrices and db.VendorPrices[id])
+                if not hasPrice then
+                    allowed = false
+                    break
+                end
+            end
+        end
+        -- Exclude recipe if any material we price from AH has AH quantity below minimum.
+        local minQty = (db.MinAHQuantity and db.MinAHQuantity > 0) and db.MinAHQuantity or 0
+        if allowed and minQty > 0 and db.AHPrices and db.AHQty and next(db.AHQty) then
+            for _, r in ipairs(rec.reagents or {}) do
+                local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+                if id and db.AHPrices[id] and (db.AHQty[id] or 0) < minQty then
+                    allowed = false
+                    break
+                end
+            end
+        end
+
         if allowed then
             table.insert(filteredRecipes, rec)
         end
     end
     recipes = filteredRecipes
+    L.Print("过滤后可用配方数量: " .. #recipes)
     
     -- Find shortest path using Bellman-Ford like DP logic across skill levels
     for currentPoint = targetStart, targetEnd - 1 do
@@ -318,7 +355,12 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     end
     
     if dp[targetEnd] >= 99999999999 then
-        return nil, profName, currentSkill -- Unreachable (no recipes available to push further)
+        local maxReached = targetStart
+        for s = targetStart, targetEnd do
+            if dp[s] < 99999999999 then maxReached = s end
+        end
+        L.Print(string.format("错误: 算法在等级 %d 处中断，无法到达 %d。请检查此时是否缺少可用的后续配方。", maxReached, targetEnd))
+        return nil, profName, targetStart, targetEnd, 0 -- Unreachable
     end
     
     -- Reconstruct the route by backtracking
