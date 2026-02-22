@@ -66,7 +66,12 @@ function L.GetRecipeList(includeHoliday)
                                 recipeItemIDs[#recipeItemIDs + 1] = rid
                             end
                         end
-                        
+                        local createdItemID = info and info[5]
+                        local numMadeMin = info and info[10] or 1
+                        local numMadeMax = info and info[11] or 1
+                        local numMade = (type(numMadeMin) == "number" and type(numMadeMax) == "number") and ((numMadeMin + numMadeMax) / 2) or 1
+                        if numMade <= 0 then numMade = 1 end
+
                         list[#list + 1] = {
                             name = name,
                             sid = sid,
@@ -80,6 +85,8 @@ function L.GetRecipeList(includeHoliday)
                             recipeItemIDs = recipeItemIDs,
                             isKnown = (IsSpellKnown and IsSpellKnown(sid)) or false,
                             index = sid,
+                            createdItemID = createdItemID,
+                            numMade = numMade,
                         }
                     end
                 end
@@ -101,6 +108,17 @@ function L.GetRecipeList(includeHoliday)
                     end
                 end
                 local link = GetTradeSkillRecipeLink and GetTradeSkillRecipeLink(i) or nil
+                local itemLink = GetTradeSkillItemLink and GetTradeSkillItemLink(i) or nil
+                local createdItemID = nil
+                if itemLink and type(itemLink) == "string" then
+                    createdItemID = tonumber(itemLink:match("item:(%d+)"))
+                end
+                local numMade = 1
+                if GetTradeSkillNumMade then
+                    local nMin, nMax = GetTradeSkillNumMade(i)
+                    if nMin and nMax then numMade = (nMin + nMax) / 2 elseif nMin then numMade = nMin end
+                    if numMade <= 0 then numMade = 1 end
+                end
                 list[#list + 1] = {
                     name = name,
                     index = i,
@@ -109,6 +127,8 @@ function L.GetRecipeList(includeHoliday)
                     reagents = reagents,
                     recipeLink = link,
                     isKnown = true,
+                    createdItemID = createdItemID,
+                    numMade = numMade,
                 }
             end
         end
@@ -212,6 +232,79 @@ function L.GetItemPrice(itemNameOrLinkOrId)
     return 0 -- Failed to calculate
 end
 
+local EFF_COST_UNKNOWN = 999999999
+
+-- Build effective cost per item: min(market price, cost to craft from other recipes).
+-- Handles chains (e.g. Lesser Healing Potion as material for Healing Potion). Returns map itemID -> copper.
+function L.ComputeEffectiveMaterialCosts(recipes)
+    local db = ProfLevelHelperDB
+    local nameToID = db and db.NameToID
+    local effectiveCost = {}
+    local itemIds = {}
+
+    for _, rec in ipairs(recipes or {}) do
+        if rec.createdItemID then
+            itemIds[rec.createdItemID] = true
+        end
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+            if id then itemIds[id] = true end
+        end
+    end
+
+    for id in pairs(itemIds) do
+        local p = L.GetItemPrice(id)
+        effectiveCost[id] = (p ~= nil and p >= 0) and p or EFF_COST_UNKNOWN
+    end
+
+    local maxIter = 50
+    while maxIter > 0 do
+        maxIter = maxIter - 1
+        local changed = false
+        for _, rec in ipairs(recipes or {}) do
+            if rec.createdItemID and rec.numMade and rec.numMade > 0 then
+                local costSum = 0
+                local allKnown = true
+                for _, r in ipairs(rec.reagents or {}) do
+                    local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+                    local c = (id and effectiveCost[id]) or EFF_COST_UNKNOWN
+                    if c >= EFF_COST_UNKNOWN then allKnown = false end
+                    costSum = costSum + (c or 0) * (r.count or 0)
+                end
+                if allKnown then
+                    local costPer = costSum / rec.numMade
+                    local cur = effectiveCost[rec.createdItemID]
+                    if cur == nil or costPer < cur then
+                        effectiveCost[rec.createdItemID] = costPer
+                        changed = true
+                    end
+                end
+            end
+        end
+        if not changed then break end
+    end
+
+    return effectiveCost
+end
+
+-- Cost per one craft; if effectiveCost map is provided, use it for unit prices (craft-chain aware).
+function L.CraftCostWithEffective(reagents, effectiveCost)
+    local cost = 0
+    local db = ProfLevelHelperDB
+    local nameToID = db and db.NameToID
+    for _, r in ipairs(reagents or {}) do
+        local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+        local unitPrice
+        if effectiveCost and id and effectiveCost[id] and effectiveCost[id] < EFF_COST_UNKNOWN then
+            unitPrice = effectiveCost[id]
+        else
+            unitPrice = L.GetItemPrice(id or r.name)
+        end
+        cost = cost + (unitPrice or 0) * (r.count or 0)
+    end
+    return cost
+end
+
 -- Calculate global cheapest route using Dynamic Programming (Shortest Path)
 function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local recipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
@@ -233,11 +326,13 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         dp[s] = 99999999999 -- effectively infinity
     end
     dp[targetStart] = 0
-    
+
+    local effectiveCost = L.ComputeEffectiveMaterialCosts(recipes)
+
     -- Pre-calculate material and acquisition costs to save time, and apply source filters
     local filteredRecipes = {}
     for _, rec in ipairs(recipes) do
-        rec.matCost = L.CraftCost(rec.reagents)
+        rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
         -- Trainer cost discount handles 0.9 inside RecipeCost if we had reputation logic, 
         -- but here user requested a flat 0.9 reputation discount for trainers.
         local rCost, rSource = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
@@ -257,7 +352,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             if rec.acqSource:match("任务") and db.IncludeSourceQuest == false then allowed = false end
             if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and db.IncludeSourceUnknown == false then allowed = false end
         end
-        -- Exclude recipe if any material has no price in our data (would be treated as 0 and wrongly recommended).
+        -- Exclude recipe if any material has no effective cost (market or craft chain).
         if allowed then
             for _, r in ipairs(rec.reagents or {}) do
                 local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
@@ -265,7 +360,8 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     allowed = false
                     break
                 end
-                local hasPrice = (db.AHPrices and db.AHPrices[id]) or (db.VendorPrices and db.VendorPrices[id])
+                local hasPrice = (effectiveCost[id] and effectiveCost[id] < EFF_COST_UNKNOWN)
+                    or (db.AHPrices and db.AHPrices[id]) or (db.VendorPrices and db.VendorPrices[id])
                 if not hasPrice then
                     allowed = false
                     break
