@@ -25,7 +25,7 @@ local function InitDB()
     db.NameToID = db.NameToID or {}
     db.IDToName = db.IDToName or {}
     db.TrainerCosts = db.TrainerCosts or {}
-    if db.UseTieredPricing == nil then db.UseTieredPricing = false end
+    if db.UseTieredPricing == nil then db.UseTieredPricing = true end
     if db.TieredPricingMaxRounds == nil then db.TieredPricingMaxRounds = 10 end
     -- Fragment data comes only from FragmentCosts.lua; replace SavedVariables so old/wrong data is cleared.
     db.FragmentCosts = {}
@@ -41,18 +41,18 @@ local function InitDB()
     db.AHSellBackBlacklist = db.AHSellBackBlacklist or {}
     db.AHSellBackWhitelist = db.AHSellBackWhitelist or {}
 
-    if db.MinAHQuantity == nil then db.MinAHQuantity = 50 end
+    if db.MinAHQuantity == nil then db.MinAHQuantity = 40 end
     if db.IncludeHolidayRecipes == nil then db.IncludeHolidayRecipes = false end
     if db.scanPerFrame == nil then db.scanPerFrame = 100 end
     if db.IgnoredOutlierPercent == nil then db.IgnoredOutlierPercent = 0.10 end
     if db.TargetSkillStart == nil then db.TargetSkillStart = 1 end
-    if db.TargetSkillEnd == nil then db.TargetSkillEnd = 450 end
-    
-    -- New source filters: Default to TRUE for common sources so users don't see "empty list"
+    if db.TargetSkillEnd == nil then db.TargetSkillEnd = 400 end
+
+    -- Source filters: default to trainer + AH only for out-of-box experience
     if db.IncludeSourceTrainer == nil then db.IncludeSourceTrainer = true end
     if db.IncludeSourceAH == nil then db.IncludeSourceAH = true end
-    if db.IncludeSourceVendor == nil then db.IncludeSourceVendor = true end
-    if db.IncludeSourceQuest == nil then db.IncludeSourceQuest = true end
+    if db.IncludeSourceVendor == nil then db.IncludeSourceVendor = false end
+    if db.IncludeSourceQuest == nil then db.IncludeSourceQuest = false end
     if db.IncludeSourceUnknown == nil then db.IncludeSourceUnknown = false end
 end
 
