@@ -142,7 +142,7 @@ function L.OpenOptions()
     end
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
-    f:SetSize(320, 455)
+    f:SetSize(420, 455)
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -168,29 +168,20 @@ function L.OpenOptions()
     local content = f.optionsScrollChild
     if not content then
         content = CreateFrame("Frame", nil, scroll)
-        content:SetSize(260, 480)
         scroll:SetScrollChild(content)
         f.optionsScrollChild = content
     end
+    content:SetSize(360, 480)
 
     local title = f.title or f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16)
     title:SetText("ProfLevelHelper (设置选项)")
     f.title = title
 
-    local scanBtn = f.scanBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    scanBtn:SetSize(120, 22)
-    scanBtn:SetPoint("TOPLEFT", 24, -40)
-    scanBtn:SetText("全量扫描拍卖行")
-    scanBtn:SetScript("OnClick", function()
-        if L.AHScanRunning then return end
-        L.ScanAH()
-    end)
-    f.scanBtn = scanBtn
-    L.ScanAHButton = scanBtn
+    L.ScanAHButton = nil
 
     local cb = f.checkHoliday or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-    cb:SetPoint("TOPLEFT", 24, -70)
+    cb:SetPoint("TOPLEFT", 24, -40)
     cb:SetChecked(ProfLevelHelperDB.IncludeHolidayRecipes)
     cb:SetScript("OnClick", function()
         ProfLevelHelperDB.IncludeHolidayRecipes = cb:GetChecked()
@@ -204,7 +195,7 @@ function L.OpenOptions()
 
     -- Input Start
     local startLabel = f.startLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    startLabel:SetPoint("TOPLEFT", 24, -110)
+    startLabel:SetPoint("TOPLEFT", 24, -80)
     startLabel:SetText("规划起点 (当前等级):")
     f.startLabel = startLabel
     local startInput = f.startInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
@@ -224,7 +215,7 @@ function L.OpenOptions()
 
     -- Input End
     local endLabel = f.endLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    endLabel:SetPoint("TOPLEFT", 24, -140)
+    endLabel:SetPoint("TOPLEFT", 24, -110)
     endLabel:SetText("规划终点 (目标满级):")
     f.endLabel = endLabel
     local endInput = f.endInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
@@ -244,7 +235,7 @@ function L.OpenOptions()
 
     -- Input Outlier Percent
     local pctLabel = f.pctLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    pctLabel:SetPoint("TOPLEFT", 24, -170)
+    pctLabel:SetPoint("TOPLEFT", 24, -140)
     pctLabel:SetText("异常低价过滤比例 (%):")
     f.pctLabel = pctLabel
     local pctInput = f.pctInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
@@ -268,13 +259,13 @@ function L.OpenOptions()
     end)
     f.pctInput = pctInput
 
-    -- Min AH quantity for materials (skipped automatically when tiered pricing is active)
+    -- Min AH quantity for materials (skipped when tiered pricing is on)
     local minQtyLabel = f.minQtyLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    minQtyLabel:SetPoint("TOPLEFT", 24, -200)
-    minQtyLabel:SetText("材料在拍卖行中的最小存在数量 (开启阶梯价格时自动忽略):")
+    minQtyLabel:SetPoint("TOPLEFT", 24, -170)
+    minQtyLabel:SetText("材料最小AH数量 (阶梯开启时忽略):")
     f.minQtyLabel = minQtyLabel
     local minQtyInput = f.minQtyInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
-    minQtyInput:SetSize(50, 20)
+    minQtyInput:SetSize(60, 20)
     minQtyInput:SetPoint("LEFT", minQtyLabel, "RIGHT", 10, 0)
     minQtyInput:SetAutoFocus(false)
     minQtyInput:SetNumeric(true)
@@ -290,7 +281,7 @@ function L.OpenOptions()
 
     -- Titan Fragment: value per fragment (copper), default 8 silver
     local fragLabel = f.fragLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    fragLabel:SetPoint("TOPLEFT", 24, -230)
+    fragLabel:SetPoint("TOPLEFT", 24, -200)
     fragLabel:SetText("泰坦碎片单价(铜):")
     f.fragLabel = fragLabel
     local fragInput = f.fragInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
@@ -310,7 +301,7 @@ function L.OpenOptions()
 
     -- Sell-back method: vendor or AH (affects net cost calculation)
     local sellBackLabel = f.sellBackLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    sellBackLabel:SetPoint("TOPLEFT", 24, -255)
+    sellBackLabel:SetPoint("TOPLEFT", 24, -225)
     sellBackLabel:SetText("回血方式:")
     f.sellBackLabel = sellBackLabel
     local cbVendor = f.cb_sellBackVendor or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
@@ -338,13 +329,16 @@ function L.OpenOptions()
     lblA:SetPoint("LEFT", cbAH, "RIGHT", 2, 0)
     lblA:SetText("拍卖")
 
-    -- AH sell-back blacklist: show count and "View blacklist" button (clear is in detail UI)
+    -- AH sell-back blacklist: label can wrap; count and button on next line
     local blLabel = f.blLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    blLabel:SetPoint("TOPLEFT", 24, -272)
-    blLabel:SetText("AH回血黑名单:")
+    blLabel:SetPoint("TOPLEFT", 24, -242)
+    blLabel:SetWidth(332)
+    blLabel:SetWordWrap(true)
+    blLabel:SetNonSpaceWrap(false)
+    blLabel:SetText("AH回血黑名单(一些很难卖出的物品可以加入黑名单, 使用卖店方式回血):")
     f.blLabel = blLabel
     local blCountText = f.blCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    blCountText:SetPoint("LEFT", blLabel, "RIGHT", 6, 0)
+    blCountText:SetPoint("TOPLEFT", blLabel, "BOTTOMLEFT", 0, -4)
     f.blCountText = blCountText
     local blDetailBtn = f.blDetailBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     blDetailBtn:SetSize(90, 20)
@@ -355,8 +349,8 @@ function L.OpenOptions()
     end)
     f.blDetailBtn = blDetailBtn
 
-    -- Source Filters
-    local yOfs = -302
+    -- Tiered pricing (below blacklist block; leave room for wrapped label + count row)
+    local yOfs = -308
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
@@ -374,37 +368,15 @@ function L.OpenOptions()
         yOfs = yOfs - 25
     end
 
+    createCheckbox("UseTieredPricing", "使用动态阶梯价格（需先扫描拍卖行）")
+    yOfs = yOfs - 22
+
+    -- Source Filters (recipe source)
     createCheckbox("IncludeSourceTrainer", "包含训练师图纸")
     createCheckbox("IncludeSourceAH", "包含拍卖行图纸")
     createCheckbox("IncludeSourceVendor", "包含NPC出售图纸")
     createCheckbox("IncludeSourceQuest", "包含任务奖励图纸")
     createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
-    createCheckbox("UseTieredPricing", "使用动态阶梯价格（需先扫描拍卖行）")
-
-    -- Tiered pricing max iterations (only used when UseTieredPricing is on)
-    local roundsLabel = f.tieredRoundsLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    roundsLabel:SetPoint("TOPLEFT", 24, yOfs)
-    roundsLabel:SetText("阶梯价格迭代轮数 (1-100):")
-    f.tieredRoundsLabel = roundsLabel
-    local roundsInput = f.tieredRoundsInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
-    roundsInput:SetSize(40, 20)
-    roundsInput:SetPoint("LEFT", roundsLabel, "RIGHT", 10, 0)
-    roundsInput:SetAutoFocus(false)
-    roundsInput:SetNumeric(true)
-    local currRounds = ProfLevelHelperDB.TieredPricingMaxRounds
-    if currRounds == nil or type(currRounds) ~= "number" or currRounds < 1 then currRounds = 10 end
-    currRounds = math.min(100, math.max(1, math.floor(currRounds)))
-    ProfLevelHelperDB.TieredPricingMaxRounds = currRounds
-    roundsInput:SetText(tostring(currRounds))
-    roundsInput:SetScript("OnTextChanged", function(self)
-        local val = tonumber(self:GetText())
-        if val and val >= 1 and val <= 100 then
-            ProfLevelHelperDB.TieredPricingMaxRounds = math.floor(val)
-            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
-        end
-    end)
-    f.tieredRoundsInput = roundsInput
-    yOfs = yOfs - 22
 
     local feedback = f.feedbackText or f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     feedback:SetPoint("BOTTOM", 0, 38)
