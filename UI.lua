@@ -381,11 +381,14 @@ function L.OpenOptions()
     end)
     f.wlDetailBtn = wlDetailBtn
 
-    -- Tiered pricing (below blacklist + whitelist blocks)
-    local yOfs = -338
+    -- Tiered pricing and source filters: anchor below whitelist so they never overlap when labels wrap
+    local lastCbAnchor = wlCountText
+    local gap = 20
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", 24, yOfs)
+        cb:SetPoint("TOPLEFT", lastCbAnchor, "BOTTOMLEFT", 0, -gap)
+        lastCbAnchor = cb
+        gap = (key == "UseTieredPricing") and 47 or 25
         if ProfLevelHelperDB[key] == nil then ProfLevelHelperDB[key] = false end
         cb:SetChecked(ProfLevelHelperDB[key])
         cb:SetScript("OnClick", function()
@@ -397,11 +400,9 @@ function L.OpenOptions()
         cbLabel:SetPoint("LEFT", cb, "RIGHT", 4, 0)
         cbLabel:SetText(text)
         cb.label = cbLabel
-        yOfs = yOfs - 25
     end
 
     createCheckbox("UseTieredPricing", "使用动态阶梯价格（需先扫描拍卖行）")
-    yOfs = yOfs - 22
 
     -- Source Filters (recipe source)
     createCheckbox("IncludeSourceTrainer", "包含训练师图纸")
@@ -792,7 +793,7 @@ function L.ShowResultList()
         if not L.ResultFrame then
             local f = CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
             L.ResultFrame = f
-            f:SetSize(600, 480)
+            f:SetSize(660, 480)
             f:SetPoint("CENTER")
             f:SetFrameStrata("DIALOG")
             f:SetBackdrop({
@@ -974,7 +975,7 @@ function L.ShowResultList()
                 CopperToGold(seg.totalSellBackVendor or 0), CopperToGold(seg.totalSellBackAH or 0),
                 goldStr, fragCostStr,
                 materialsLine))
-            line:SetWidth(scroll:GetWidth() - 24)
+            line:SetWidth(scroll:GetWidth() - 116)
             line:Show()
 
             local currentHeight = line:GetStringHeight()
@@ -985,7 +986,7 @@ function L.ShowResultList()
                     local isBlacklisted = bl[seg.recipe.createdItemID]
                     local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
                     btn:SetSize(78, 18)
-                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 82, -y)
+                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 30, -y)
                     btn:SetText(isBlacklisted and "[改回AH回血]" or "[不按AH回血]")
                     btn.itemID = seg.recipe.createdItemID
                     btn:SetScript("OnClick", function()
@@ -1006,7 +1007,7 @@ function L.ShowResultList()
                     local isWhitelisted = wl[seg.recipe.createdItemID]
                     local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
                     btn:SetSize(78, 18)
-                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 82, -y)
+                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 30, -y)
                     btn:SetText(isWhitelisted and "[取消AH回血]" or "[改为AH回血]")
                     btn.itemID = seg.recipe.createdItemID
                     btn:SetScript("OnClick", function()
