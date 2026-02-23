@@ -16,6 +16,18 @@ function L.FormatAHScanTime()
     return "Never"
 end
 
+-- Parse add-input to itemID: number, item link, or name (NameToID from AH scan).
+function L.ParseItemIdFromAddInput(str, db)
+    if not str or str == "" then return nil end
+    str = str:match("^%s*(.-)%s*$") or str
+    local id = tonumber(str)
+    if id and id > 0 then return id end
+    id = str and str:match("item:(%d+)")
+    if id then return tonumber(id) end
+    if db and db.NameToID and db.NameToID[str] then return db.NameToID[str] end
+    return nil
+end
+
 -- Scan progress frame (shown during AH scan)
 function L.ShowScanProgress()
     local f = L.ScanProgressFrame
@@ -349,8 +361,28 @@ function L.OpenOptions()
     end)
     f.blDetailBtn = blDetailBtn
 
-    -- Tiered pricing (below blacklist block; leave room for wrapped label + count row)
-    local yOfs = -308
+    -- AH sell-back whitelist: only when using vendor sell-back; items in whitelist use AH recovery
+    local wlLabel = f.wlLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    wlLabel:SetPoint("TOPLEFT", blCountText, "BOTTOMLEFT", 0, -14)
+    wlLabel:SetWidth(332)
+    wlLabel:SetWordWrap(true)
+    wlLabel:SetNonSpaceWrap(false)
+    wlLabel:SetText("AH回血白名单(卖店回血时, 名单中的物品强制按AH价回血):")
+    f.wlLabel = wlLabel
+    local wlCountText = f.wlCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    wlCountText:SetPoint("TOPLEFT", wlLabel, "BOTTOMLEFT", 0, -4)
+    f.wlCountText = wlCountText
+    local wlDetailBtn = f.wlDetailBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    wlDetailBtn:SetSize(90, 20)
+    wlDetailBtn:SetPoint("LEFT", wlCountText, "RIGHT", 12, 0)
+    wlDetailBtn:SetText("查看白名单")
+    wlDetailBtn:SetScript("OnClick", function()
+        if L.ShowAHSellBackWhitelistDetail then L.ShowAHSellBackWhitelistDetail() end
+    end)
+    f.wlDetailBtn = wlDetailBtn
+
+    -- Tiered pricing (below blacklist + whitelist blocks)
+    local yOfs = -338
     local function createCheckbox(key, text)
         local cb = f["cb_"..key] or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
         cb:SetPoint("TOPLEFT", 24, yOfs)
@@ -398,7 +430,12 @@ function L.OpenOptions()
     if ProfLevelHelperDB.AHSellBackBlacklist then
         for _ in pairs(ProfLevelHelperDB.AHSellBackBlacklist) do nBl = nBl + 1 end
     end
+    local nWl = 0
+    if ProfLevelHelperDB.AHSellBackWhitelist then
+        for _ in pairs(ProfLevelHelperDB.AHSellBackWhitelist) do nWl = nWl + 1 end
+    end
     if f.blCountText then f.blCountText:SetText("已屏蔽 " .. nBl .. " 种") end
+    if f.wlCountText then f.wlCountText:SetText("已添加 " .. nWl .. " 种") end
     L.UpdateScanButtonState()
     f:Show()
 end
@@ -436,8 +473,51 @@ function L.ShowAHSellBackBlacklistDetail()
         title:SetText("黑名单详情 (AH回血)")
         f.title = title
 
+        local addRow = CreateFrame("Frame", nil, f)
+        addRow:SetSize(300, 24)
+        addRow:SetPoint("TOP", 0, -40)
+        f.addRow = addRow
+        local addEdit = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
+        addEdit:SetSize(180, 20)
+        addEdit:SetPoint("LEFT", 12, 0)
+        addEdit:SetAutoFocus(false)
+        addEdit:SetScript("OnEnterPressed", function() addEdit:ClearFocus() end)
+        addEdit:SetScript("OnEscapePressed", function() addEdit:ClearFocus() end)
+        f.addEdit = addEdit
+        local addBtn = CreateFrame("Button", nil, addRow, "UIPanelButtonTemplate")
+        addBtn:SetSize(50, 20)
+        addBtn:SetPoint("LEFT", addEdit, "RIGHT", 8, 0)
+        addBtn:SetText("添加")
+        addBtn:SetScript("OnClick", function()
+            local str = addEdit:GetText()
+            local id = L.ParseItemIdFromAddInput(str, ProfLevelHelperDB)
+            if id and id > 0 then
+                ProfLevelHelperDB.AHSellBackBlacklist = ProfLevelHelperDB.AHSellBackBlacklist or {}
+                ProfLevelHelperDB.AHSellBackBlacklist[id] = true
+                addEdit:SetText("")
+                local opt = L.OptionsFrame
+                if opt and opt.blCountText then
+                    local n = 0
+                    for _ in pairs(ProfLevelHelperDB.AHSellBackBlacklist) do n = n + 1 end
+                    opt.blCountText:SetText("已屏蔽 " .. n .. " 种")
+                end
+                if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+                L.ShowAHSellBackBlacklistDetail()
+            else
+                local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
+                if trimmed and trimmed ~= "" then
+                    L.Print("未找到该物品，请输入物品ID/链接，或先扫描拍卖行后再输入物品名称。")
+                end
+            end
+        end)
+        f.addBtn = addBtn
+        local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+        addHint:SetText("(ID/链接/名称)")
+        f.addHint = addHint
+
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 12, -44)
+        scroll:SetPoint("TOPLEFT", 12, -68)
         scroll:SetPoint("BOTTOMRIGHT", -32, 52)
         f.scroll = scroll
         local content = CreateFrame("Frame", nil, scroll)
@@ -503,6 +583,158 @@ function L.ShowAHSellBackBlacklistDetail()
             if opt and opt.blCountText then opt.blCountText:SetText("已屏蔽 " .. nBl .. " 种") end
             if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
             L.ShowAHSellBackBlacklistDetail()
+        end)
+        row:Show()
+        y = y + ROW_H
+    end
+    content:SetHeight(math.max(1, y))
+    f.clearBtn:SetShown(#list > 0)
+    f:Show()
+end
+
+-- Whitelist detail UI: list + manual add + clear
+function L.ShowAHSellBackWhitelistDetail()
+    local wl = ProfLevelHelperDB.AHSellBackWhitelist or {}
+    local list = {}
+    for id in pairs(wl) do list[#list + 1] = id end
+    table.sort(list)
+
+    local f = L.WhitelistDetailFrame
+    if not f then
+        f = CreateFrame("Frame", "ProfLevelHelperWhitelistDetail", UIParent, "BackdropTemplate")
+        L.WhitelistDetailFrame = f
+        f:SetSize(340, 380)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
+        f:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -16)
+        title:SetText("白名单详情 (卖店时强制AH回血)")
+        f.title = title
+
+        local addRow = CreateFrame("Frame", nil, f)
+        addRow:SetSize(300, 24)
+        addRow:SetPoint("TOP", 0, -40)
+        f.addRow = addRow
+        local addEdit = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
+        addEdit:SetSize(180, 20)
+        addEdit:SetPoint("LEFT", 12, 0)
+        addEdit:SetAutoFocus(false)
+        addEdit:SetScript("OnEnterPressed", function() addEdit:ClearFocus() end)
+        addEdit:SetScript("OnEscapePressed", function() addEdit:ClearFocus() end)
+        f.addEdit = addEdit
+        local addBtn = CreateFrame("Button", nil, addRow, "UIPanelButtonTemplate")
+        addBtn:SetSize(50, 20)
+        addBtn:SetPoint("LEFT", addEdit, "RIGHT", 8, 0)
+        addBtn:SetText("添加")
+        addBtn:SetScript("OnClick", function()
+            local str = addEdit:GetText()
+            local id = L.ParseItemIdFromAddInput(str, ProfLevelHelperDB)
+            if id and id > 0 then
+                ProfLevelHelperDB.AHSellBackWhitelist = ProfLevelHelperDB.AHSellBackWhitelist or {}
+                ProfLevelHelperDB.AHSellBackWhitelist[id] = true
+                addEdit:SetText("")
+                local opt = L.OptionsFrame
+                if opt and opt.wlCountText then
+                    local n = 0
+                    for _ in pairs(ProfLevelHelperDB.AHSellBackWhitelist) do n = n + 1 end
+                    opt.wlCountText:SetText("已添加 " .. n .. " 种")
+                end
+                if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+                L.ShowAHSellBackWhitelistDetail()
+            else
+                local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
+                if trimmed and trimmed ~= "" then
+                    L.Print("未找到该物品，请输入物品ID/链接，或先扫描拍卖行后再输入物品名称。")
+                end
+            end
+        end)
+        f.addBtn = addBtn
+        local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+        addHint:SetText("(ID/链接/名称)")
+        f.addHint = addHint
+
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 12, -68)
+        scroll:SetPoint("BOTTOMRIGHT", -32, 52)
+        f.scroll = scroll
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(280, 1)
+        scroll:SetScrollChild(content)
+        f.scrollContent = content
+
+        local clearBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        clearBtn:SetSize(100, 22)
+        clearBtn:SetPoint("BOTTOM", -60, 16)
+        clearBtn:SetText("清空白名单")
+        clearBtn:SetScript("OnClick", function()
+            ProfLevelHelperDB.AHSellBackWhitelist = {}
+            local opt = L.OptionsFrame
+            if opt and opt.wlCountText then opt.wlCountText:SetText("已添加 0 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowAHSellBackWhitelistDetail()
+        end)
+        f.clearBtn = clearBtn
+
+        local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        closeBtn:SetSize(80, 22)
+        closeBtn:SetPoint("BOTTOM", 60, 16)
+        closeBtn:SetText("关闭")
+        closeBtn:SetScript("OnClick", function() f:Hide() end)
+        f.closeBtn = closeBtn
+    end
+
+    local content = f.scrollContent
+    content:SetHeight(1)
+    for k, row in pairs(content) do
+        if type(row) == "table" and row.Hide then row:Hide() end
+    end
+
+    local ROW_H = 22
+    local y = 0
+    for _, itemID in ipairs(list) do
+        local name = GetItemInfo(itemID) or ("Item " .. tostring(itemID))
+        local row = content["row_" .. itemID]
+        if not row then
+            row = CreateFrame("Frame", nil, content)
+            row:SetHeight(ROW_H)
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.label:SetPoint("LEFT", 8, 0)
+            row.label:SetPoint("RIGHT", -70, 0)
+            row.label:SetWordWrap(false)
+            row.btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.btn:SetSize(50, 18)
+            row.btn:SetPoint("RIGHT", 0, 0)
+            row.btn:SetText("移除")
+            content["row_" .. itemID] = row
+        end
+        row:SetPoint("TOPLEFT", 0, -y)
+        row:SetPoint("TOPRIGHT", 0, -y)
+        row.label:SetText(name)
+        row.btn:SetScript("OnClick", function()
+            if ProfLevelHelperDB.AHSellBackWhitelist then ProfLevelHelperDB.AHSellBackWhitelist[itemID] = nil end
+            local nWl = 0
+            if ProfLevelHelperDB.AHSellBackWhitelist then
+                for _ in pairs(ProfLevelHelperDB.AHSellBackWhitelist) do nWl = nWl + 1 end
+            end
+            local opt = L.OptionsFrame
+            if opt and opt.wlCountText then opt.wlCountText:SetText("已添加 " .. nWl .. " 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowAHSellBackWhitelistDetail()
         end)
         row:Show()
         y = y + ROW_H
@@ -665,7 +897,8 @@ function L.ShowResultList()
                 end
             end
             local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
-            local sellback = (db and db.SellBackMethod == "ah") and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+            local useAH = db and ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID]) or (db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]))
+            local sellback = useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
             totalGold = totalGold + (seg.totalRecCost or 0) + goldMat - sellback
             totalFragments = totalFragments + fragmentCount
         end
@@ -720,7 +953,8 @@ function L.ShowResultList()
             end
 
             local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
-            local sellback = (db and db.SellBackMethod == "ah") and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+            local useAH = db and ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID]) or (db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]))
+            local sellback = useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
             local segGold = (seg.totalRecCost or 0) + goldMat - sellback
             totalGold = totalGold + segGold
             totalFragments = totalFragments + fragmentCount
@@ -745,27 +979,50 @@ function L.ShowResultList()
 
             local currentHeight = line:GetStringHeight()
             if not currentHeight or currentHeight == 0 then currentHeight = 38 end
-            if ProfLevelHelperDB.SellBackMethod == "ah" and seg.recipe.createdItemID then
-                local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
-                local isBlacklisted = bl[seg.recipe.createdItemID]
-                local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-                btn:SetSize(78, 18)
-                btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 82, -y)
-                btn:SetText(isBlacklisted and "[改回AH回血]" or "[不按AH回血]")
-                btn.itemID = seg.recipe.createdItemID
-                btn:SetScript("OnClick", function()
-                    local id = btn.itemID
-                    if id and ProfLevelHelperDB.AHSellBackBlacklist then
-                        if isBlacklisted then
-                            ProfLevelHelperDB.AHSellBackBlacklist[id] = nil
-                        else
-                            ProfLevelHelperDB.AHSellBackBlacklist[id] = true
+            if seg.recipe.createdItemID then
+                if ProfLevelHelperDB.SellBackMethod == "ah" then
+                    local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
+                    local isBlacklisted = bl[seg.recipe.createdItemID]
+                    local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+                    btn:SetSize(78, 18)
+                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 82, -y)
+                    btn:SetText(isBlacklisted and "[改回AH回血]" or "[不按AH回血]")
+                    btn.itemID = seg.recipe.createdItemID
+                    btn:SetScript("OnClick", function()
+                        local id = btn.itemID
+                        if id and ProfLevelHelperDB.AHSellBackBlacklist then
+                            if isBlacklisted then
+                                ProfLevelHelperDB.AHSellBackBlacklist[id] = nil
+                            else
+                                ProfLevelHelperDB.AHSellBackBlacklist[id] = true
+                            end
+                            L.ShowResultList()
                         end
-                        L.ShowResultList()
-                    end
-                end)
-                btn:Show()
-                table.insert(content.segmentBtns, btn)
+                    end)
+                    btn:Show()
+                    table.insert(content.segmentBtns, btn)
+                else
+                    local wl = ProfLevelHelperDB.AHSellBackWhitelist or {}
+                    local isWhitelisted = wl[seg.recipe.createdItemID]
+                    local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+                    btn:SetSize(78, 18)
+                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 82, -y)
+                    btn:SetText(isWhitelisted and "[取消AH回血]" or "[改为AH回血]")
+                    btn.itemID = seg.recipe.createdItemID
+                    btn:SetScript("OnClick", function()
+                        local id = btn.itemID
+                        if id and ProfLevelHelperDB.AHSellBackWhitelist then
+                            if isWhitelisted then
+                                ProfLevelHelperDB.AHSellBackWhitelist[id] = nil
+                            else
+                                ProfLevelHelperDB.AHSellBackWhitelist[id] = true
+                            end
+                            L.ShowResultList()
+                        end
+                    end)
+                    btn:Show()
+                    table.insert(content.segmentBtns, btn)
+                end
             end
             y = y + currentHeight + 16
         end
@@ -882,7 +1139,8 @@ function L.ShowExportFrame()
         if fragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr end
 
         local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
-        local sellback = (db and db.SellBackMethod == "ah") and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+        local useAH = db and ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID]) or (db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]))
+        local sellback = useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
         local segGold = (seg.totalRecCost or 0) + goldMat - sellback
         local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. "碎片") or "0碎片"
         local acq = seg.recSource and ("来源:"..seg.recSource) or ""

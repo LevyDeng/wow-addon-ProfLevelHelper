@@ -367,7 +367,7 @@ function L.TestCostAtSkill(skill)
                 local numMade = rec.numMade or 1
                 local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
                 local sellBackAH = (rec.ahPricePerItem or 0) * numMade * expectedCrafts
-                local useAH = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+                local useAH = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
                 local sellBack = useAH and sellBackAH or sellBackVendor
                 local matGross = rec.matCost * expectedCrafts
                 local stepCost = matGross - sellBack
@@ -682,7 +682,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             if not yellow or not gray then
                 yellow, gray = L.GetRecipeThresholds(rec.name, profName, learnSkill)
             end
-            local useAH      = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+            local useAH      = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
             local numMade    = rec.numMade or 1
             local acqCost    = (not rec.isKnown) and (rec.acqCost or 0) or 0
             local validStart = math.max(learnSkill, targetStart)
@@ -794,7 +794,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 recCostOnce = seg.recCostActual or 0
                 seenRecipes[rec.name] = true
             end
-            local useAH    = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+            local useAH    = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
             local sellBack = useAH and totalSA or totalSV
             table.insert(consolidatedRoute, 1, {
                 startSkill          = t,
