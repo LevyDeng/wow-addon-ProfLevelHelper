@@ -268,10 +268,10 @@ function L.OpenOptions()
     end)
     f.pctInput = pctInput
 
-    -- Min AH quantity for materials (only consider materials with at least this many on AH)
+    -- Min AH quantity for materials (skipped automatically when tiered pricing is active)
     local minQtyLabel = f.minQtyLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     minQtyLabel:SetPoint("TOPLEFT", 24, -200)
-    minQtyLabel:SetText("材料在拍卖行中的最小存在数量:")
+    minQtyLabel:SetText("材料在拍卖行中的最小存在数量 (开启阶梯价格时自动忽略):")
     f.minQtyLabel = minQtyLabel
     local minQtyInput = f.minQtyInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
     minQtyInput:SetSize(50, 20)
@@ -379,6 +379,32 @@ function L.OpenOptions()
     createCheckbox("IncludeSourceVendor", "包含NPC出售图纸")
     createCheckbox("IncludeSourceQuest", "包含任务奖励图纸")
     createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
+    createCheckbox("UseTieredPricing", "使用动态阶梯价格（需先扫描拍卖行）")
+
+    -- Tiered pricing max iterations (only used when UseTieredPricing is on)
+    local roundsLabel = f.tieredRoundsLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    roundsLabel:SetPoint("TOPLEFT", 24, yOfs)
+    roundsLabel:SetText("阶梯价格迭代轮数 (1-100):")
+    f.tieredRoundsLabel = roundsLabel
+    local roundsInput = f.tieredRoundsInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    roundsInput:SetSize(40, 20)
+    roundsInput:SetPoint("LEFT", roundsLabel, "RIGHT", 10, 0)
+    roundsInput:SetAutoFocus(false)
+    roundsInput:SetNumeric(true)
+    local currRounds = ProfLevelHelperDB.TieredPricingMaxRounds
+    if currRounds == nil or type(currRounds) ~= "number" or currRounds < 1 then currRounds = 10 end
+    currRounds = math.min(100, math.max(1, math.floor(currRounds)))
+    ProfLevelHelperDB.TieredPricingMaxRounds = currRounds
+    roundsInput:SetText(tostring(currRounds))
+    roundsInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if val and val >= 1 and val <= 100 then
+            ProfLevelHelperDB.TieredPricingMaxRounds = math.floor(val)
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        end
+    end)
+    f.tieredRoundsInput = roundsInput
+    yOfs = yOfs - 22
 
     local feedback = f.feedbackText or f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     feedback:SetPoint("BOTTOM", 0, 38)

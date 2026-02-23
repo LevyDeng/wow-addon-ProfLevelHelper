@@ -61,7 +61,7 @@ function L.StartAHScan()
     db.AHQty = {}
     db.NameToID = {}
     db.IDToName = {}
-    db.IDToName = {}
+    db.AHPriceCurve = {}
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
@@ -300,6 +300,30 @@ function L.FinishScan()
                             globalUpdatedCount = globalUpdatedCount + 1
                         end
                         db.AHQty[itemId] = totalQ
+
+                        -- Build compressed price curve: up to 8 tiers of {qty, avgPrice}.
+                        -- Consecutive listings within 5% price are merged into one tier.
+                        -- Used by tiered-pricing DP (optional feature).
+                        db.AHPriceCurve = db.AHPriceCurve or {}
+                        local MAX_TIERS = 8
+                        local MERGE_PCT = 0.05
+                        local curve = {}
+                        for _, listing in ipairs(data.listings) do
+                            local lp = math.floor((listing.price or 0) + 0.5)
+                            local lc = listing.count or 0
+                            if lp > 0 and lc > 0 then
+                                local last = curve[#curve]
+                                if not last then
+                                    curve[1] = {lc, lp}
+                                elseif #curve >= MAX_TIERS or math.abs(lp - last[2]) / last[2] <= MERGE_PCT then
+                                    local totalQ2 = last[1] + lc
+                                    curve[#curve] = {totalQ2, math.floor((last[2]*last[1] + lp*lc) / totalQ2 + 0.5)}
+                                else
+                                    curve[#curve + 1] = {lc, lp}
+                                end
+                            end
+                        end
+                        if #curve > 0 then db.AHPriceCurve[itemId] = curve end
                     end
                 end
             end

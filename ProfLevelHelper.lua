@@ -13,11 +13,13 @@ local function InitDB()
     local db = ProfLevelHelperDB
     db.AHPrices = db.AHPrices or {}
     db.AHQty = db.AHQty or {}
+    db.AHPriceCurve = db.AHPriceCurve or {}
     db.VendorPrices = db.VendorPrices or {}
     db.NameToID = db.NameToID or {}
     db.IDToName = db.IDToName or {}
-    db.IDToName = db.IDToName or {}
     db.TrainerCosts = db.TrainerCosts or {}
+    if db.UseTieredPricing == nil then db.UseTieredPricing = false end
+    if db.TieredPricingMaxRounds == nil then db.TieredPricingMaxRounds = 10 end
     -- Fragment data comes only from FragmentCosts.lua; replace SavedVariables so old/wrong data is cleared.
     db.FragmentCosts = {}
     if ProfLevelHelper_FragmentCosts and type(ProfLevelHelper_FragmentCosts) == "table" then

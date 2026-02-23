@@ -431,9 +431,56 @@ function L.GetItemPrice(itemNameOrLinkOrId)
     return 0
 end
 
+-- Returns the MARGINAL unit price when cumUnits have already been purchased.
+-- Walks the price curve to find which tier the next unit falls into.
+-- Falls back to benchmark AHPrices when no curve exists.
+function L.GetTierPriceAtCumQty(itemID, cumUnits)
+    local db = ProfLevelHelperDB
+    if not db or not itemID then return 0 end
+    local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
+    if not curve or #curve == 0 then
+        return (db.AHPrices and db.AHPrices[itemID]) or 0
+    end
+    local accum = 0
+    for _, tier in ipairs(curve) do
+        accum = accum + tier[1]
+        if cumUnits < accum then return tier[2] end
+    end
+    return curve[#curve][2]
+end
+
+-- Returns average cost per unit when buying `qty` units using the stored AH price curve.
+-- Falls back to the benchmark AHPrices if no curve is available.
+-- When qty exceeds total AH supply the last tier price is extrapolated.
+function L.GetMarginalCostForQty(itemID, qty)
+    local db = ProfLevelHelperDB
+    if not db or not itemID or not qty or qty <= 0 then return 0 end
+    local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
+    if not curve or #curve == 0 then
+        return (db.AHPrices and db.AHPrices[itemID]) or 0
+    end
+    local remaining = qty
+    local totalCost = 0
+    local lastPrice = curve[#curve][2]
+    for _, tier in ipairs(curve) do
+        if remaining <= 0 then break end
+        local tierQty   = tier[1]
+        local tierPrice = tier[2]
+        lastPrice = tierPrice
+        local take = math.min(remaining, tierQty)
+        totalCost = totalCost + take * tierPrice
+        remaining = remaining - take
+    end
+    if remaining > 0 then
+        totalCost = totalCost + remaining * lastPrice
+    end
+    return totalCost / qty
+end
+
 -- Build effective cost per item: min(market price, cost to craft from other recipes).
 -- Handles chains (e.g. Lesser Healing Potion as material for Healing Potion). Returns map itemID -> copper.
-function L.ComputeEffectiveMaterialCosts(recipes)
+-- Optional baseOverride: map itemID -> copper that replaces AH lookup for specific items (used by tiered DP).
+function L.ComputeEffectiveMaterialCosts(recipes, baseOverride)
     local db = ProfLevelHelperDB
     local nameToID = db and db.NameToID
     local effectiveCost = {}
@@ -450,7 +497,7 @@ function L.ComputeEffectiveMaterialCosts(recipes)
     end
 
     for id in pairs(itemIds) do
-        local p = L.GetItemPrice(id)
+        local p = (baseOverride and baseOverride[id]) or L.GetItemPrice(id)
         -- Treat price=0 as "no data" (EFF_COST_UNKNOWN), not free.
         effectiveCost[id] = (p and p > 0) and p or EFF_COST_UNKNOWN
     end
@@ -503,235 +550,283 @@ function L.CraftCostWithEffective(reagents, effectiveCost)
     return cost
 end
 
--- Calculate global cheapest route using Dynamic Programming (Shortest Path)
+-- Calculate global cheapest route using Dynamic Programming (Shortest Path).
+--
+-- When db.UseTieredPricing is active:
+--   The prefix-sum for each recipe is built with PER-SKILL-LEVEL material costs.
+--   At skill level l the material cost uses GetTierPriceAtCumQty(id, cumEC * count),
+--   where cumEC = expected crafts accumulated from the recipe's validStart up to l.
+--   This means the DP naturally sees the real price escalation as a recipe consumes
+--   more and more of the cheap AH stock; the optimizer can split a recipe segment
+--   exactly where a different recipe becomes cheaper.
+--
+--   Additionally, up to TieredPricingMaxRounds iterative passes are run, each time
+--   recomputing effectiveCost from the previous route's material totals. This helps
+--   craft-chain items (where a sub-crafted material's cost changes based on route)
+--   converge to better prices. Stops early when total cost no longer improves.
 function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
-    local recipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
-    if not recipes or #recipes == 0 then return nil, profName, currentSkill, currentSkill, 0 end
+    local allRecipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
+    if not allRecipes or #allRecipes == 0 then return nil, profName, currentSkill, currentSkill, 0 end
 
     targetStart = targetStart or currentSkill
-    targetEnd = targetEnd or pMaxSkill
+    targetEnd   = targetEnd   or pMaxSkill
     L.Print(string.format("计算路线: %d -> %d (%s)", targetStart, targetEnd, tostring(profName)))
-    if targetStart >= targetEnd then 
+    if targetStart >= targetEnd then
         L.Print("错误: 起点等级已大于或等于终点等级。")
-        return nil, profName, targetStart, targetEnd, 0 
+        return nil, profName, targetStart, targetEnd, 0
     end
-    
-    local effectiveCost = L.ComputeEffectiveMaterialCosts(recipes)
 
-    -- Pre-calculate material and acquisition costs to save time, and apply source filters
-    local db = ProfLevelHelperDB
-    local filteredRecipes = {}
-    for _, rec in ipairs(recipes) do
-        rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
-        -- Sell-back: vendor used for net cost; both stored so UI can show 卖NPC / AH.
-        rec.sellPricePerItem = 0
-        rec.ahPricePerItem = 0
-        if rec.createdItemID then
-            if GetItemInfo then
-                local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
-                if vp and vp > 0 then rec.sellPricePerItem = vp end
-            end
-            if db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
-                rec.ahPricePerItem = db.AHPrices[rec.createdItemID]
-            end
-        end
-        -- Trainer cost discount handles 0.9 inside RecipeCost if we had reputation logic, 
-        -- but here user requested a flat 0.9 reputation discount for trainers.
-        local rCost, rSource = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
-        rCost = rCost or 0
-        if rec.isTrainer and rCost > 0 and rCost == rec.trainPrice then
-            rCost = math.floor(rCost * 0.9)
-        end
-        rec.acqCost = rCost
-        rec.acqSource = rSource or "未知来源"
-        
-        local allowed = true
-        if not rec.isKnown then
-            if rec.acqSource == "训练师学习" and db.IncludeSourceTrainer == false then allowed = false end
-            if rec.acqSource == "拍卖行购买" and db.IncludeSourceAH == false then allowed = false end
-            if rec.acqSource == "NPC 购买" and db.IncludeSourceVendor == false then allowed = false end
-            if rec.acqSource:match("任务") and db.IncludeSourceQuest == false then allowed = false end
-            if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and db.IncludeSourceUnknown == false then allowed = false end
-        end
-        -- Exclude recipe if any material has no effective cost (market or craft chain).
-        if allowed then
-            for _, r in ipairs(rec.reagents or {}) do
-                local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
-                if not id then
-                    allowed = false
-                    break
+    local db     = ProfLevelHelperDB
+    local DPINF  = 99999999999
+    -- Pre-compute once: whether to use per-level tier pricing in prefix sums.
+    local useTieredPricing = db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve)
+    local nameToID = db.NameToID
+
+    -- -----------------------------------------------------------------------
+    -- Inner function: filter allRecipes with given effectiveCost, run the
+    -- Segment-DP, reconstruct and return (route, totalCost) or (nil, 0).
+    -- -----------------------------------------------------------------------
+    local function runDP(effectiveCost)
+        -- Pre-calculate per-recipe costs and apply source / price filters.
+        local filteredRecipes = {}
+        for _, rec in ipairs(allRecipes) do
+            rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
+            rec.sellPricePerItem = 0
+            rec.ahPricePerItem   = 0
+            if rec.createdItemID then
+                if GetItemInfo then
+                    local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
+                    if vp and vp > 0 then rec.sellPricePerItem = vp end
                 end
-                local hasPrice = (effectiveCost[id] and effectiveCost[id] > 0 and effectiveCost[id] < EFF_COST_UNKNOWN)
-                    or (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0)
-                    or (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
-                    or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
-                if not hasPrice then
-                    allowed = false
-                    break
+                if db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
+                    rec.ahPricePerItem = db.AHPrices[rec.createdItemID]
                 end
             end
-        end
-        -- Exclude recipe if any material we price from AH has AH quantity below minimum.
-        -- Also excludes materials that are not on AH at all (qty=0) when they have no
-        -- explicit vendor or fragment price, since GetItemInfo-only prices are unreliable.
-        local minQty = (db.MinAHQuantity and db.MinAHQuantity > 0) and db.MinAHQuantity or 0
-        if allowed and minQty > 0 and db.AHPrices and db.AHQty and next(db.AHQty) then
-            for _, r in ipairs(rec.reagents or {}) do
-                local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
-                if id then
-                    local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+            local rCost, rSource = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
+            rCost = rCost or 0
+            if rec.isTrainer and rCost > 0 and rCost == rec.trainPrice then
+                rCost = math.floor(rCost * 0.9)
+            end
+            rec.acqCost   = rCost
+            rec.acqSource = rSource or "未知来源"
+
+            local allowed = true
+            if not rec.isKnown then
+                if rec.acqSource == "训练师学习" and db.IncludeSourceTrainer == false then allowed = false end
+                if rec.acqSource == "拍卖行购买" and db.IncludeSourceAH == false then allowed = false end
+                if rec.acqSource == "NPC 购买" and db.IncludeSourceVendor == false then allowed = false end
+                if rec.acqSource:match("任务") and db.IncludeSourceQuest == false then allowed = false end
+                if (rec.acqSource == "需打怪或购买(价格未知)" or rec.acqSource == "未知来源" or rec.acqSource:match("打怪掉落")) and db.IncludeSourceUnknown == false then allowed = false end
+            end
+            if allowed then
+                for _, r in ipairs(rec.reagents or {}) do
+                    local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+                    if not id then allowed = false; break end
+                    local hasPrice = (effectiveCost[id] and effectiveCost[id] > 0 and effectiveCost[id] < EFF_COST_UNKNOWN)
+                        or (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0)
+                        or (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
                         or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
-                    if not hasVendorOrFrag then
-                        local ahQty = db.AHQty[id] or 0
-                        if ahQty < minQty then
-                            allowed = false
-                            break
+                    if not hasPrice then allowed = false; break end
+                end
+            end
+            -- MinAHQuantity filter: skip when tiered pricing is active, because the price
+            -- curve already penalises scarcity by extrapolating at the last-tier price.
+            local useTiered = db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve)
+            local minQty = (not useTiered and db.MinAHQuantity and db.MinAHQuantity > 0) and db.MinAHQuantity or 0
+            if allowed and minQty > 0 and db.AHPrices and db.AHQty and next(db.AHQty) then
+                for _, r in ipairs(rec.reagents or {}) do
+                    local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+                    if id then
+                        local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+                            or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
+                        if not hasVendorOrFrag and (db.AHQty[id] or 0) < minQty then
+                            allowed = false; break
                         end
                     end
                 end
             end
+            if allowed then filteredRecipes[#filteredRecipes + 1] = rec end
         end
+        L.Print("过滤后可用配方数量: " .. #filteredRecipes)
 
-        if allowed then
-            table.insert(filteredRecipes, rec)
-        end
-    end
-    recipes = filteredRecipes
-    L.Print("过滤后可用配方数量: " .. #recipes)
+        -- ===== Segment DP with prefix sums =====
+        -- dp[s] = min total cost to reach skill s from targetStart.
+        -- Transition: dp[s] = min_r { acqCost[r] + prefix[r][s] + min_t(dp[t] - prefix[r][t]) }
+        -- Running minimum best[r] updated as t advances. O(N * R).
+        local recInfos = {}
+        for ri, rec in ipairs(filteredRecipes) do
+            local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name])
+                and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
+            local yellow, gray = rec.yellow, rec.grey
+            if not yellow or not gray then
+                yellow, gray = L.GetRecipeThresholds(rec.name, profName, learnSkill)
+            end
+            local useAH      = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+            local numMade    = rec.numMade or 1
+            local acqCost    = (not rec.isKnown) and (rec.acqCost or 0) or 0
+            local validStart = math.max(learnSkill, targetStart)
+            local validEnd   = math.min(gray - 1, targetEnd - 1)
 
-    -- ===== Segment DP with prefix sums =====
-    -- dp[s] = min total cost to reach skill s from targetStart.
-    -- Optimal transition: dp[s] = min over (recipe r, start t):
-    --   dp[t] + acqCost[r] + sum_{l=t}^{s-1} stepCost(r, l)
-    -- = min over r: acqCost[r] + prefix[r][s] + min_t (dp[t] - prefix[r][t])
-    --
-    -- Maintained with a running minimum best[r] = min_t (dp[t] - prefix[r][t]),
-    -- updated as t advances. O(N * R) where N = level range, R = recipe count.
-
-    -- Step 1: precompute per-level step costs and prefix sums for each recipe.
-    local recInfos = {}
-    for ri, rec in ipairs(recipes) do
-        local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name])
-            and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
-        local yellow, gray = rec.yellow, rec.grey
-        if not yellow or not gray then
-            yellow, gray = L.GetRecipeThresholds(rec.name, profName, learnSkill)
-        end
-        local useAH   = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
-        local numMade = rec.numMade or 1
-        local acqCost = (not rec.isKnown) and (rec.acqCost or 0) or 0
-        local validStart = math.max(learnSkill, targetStart)
-        local validEnd   = math.min(gray - 1, targetEnd - 1)
-
-        -- Prefix arrays indexed by skill level l in [validStart, validEnd+1].
-        -- pX[l] = cumulative X from validStart up to but not including level l.
-        local pStep, pCrafts, pMat, pSellV, pSellA = {}, {}, {}, {}, {}
-        local cs, cc, cm, cv, ca = 0, 0, 0, 0, 0
-        for l = validStart, validEnd + 1 do
-            pStep[l] = cs; pCrafts[l] = cc; pMat[l] = cm; pSellV[l] = cv; pSellA[l] = ca
-            if l <= validEnd then
-                local chance = L.CalcSkillUpChance(gray, yellow, l)
-                if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
-                    if rec.skillType == "optimal" then chance = 1
-                    elseif rec.skillType == "easy"    then chance = 0.6
-                    elseif rec.skillType == "medium"  then chance = 0.3
+            local pStep, pCrafts, pMat, pSellV, pSellA = {}, {}, {}, {}, {}
+            local cs, cc, cm, cv, ca = 0, 0, 0, 0, 0
+            -- cumEC: expected crafts accumulated from validStart; used to look up
+            -- the correct price tier when useTieredPricing is true.
+            local cumEC = 0
+            for l = validStart, validEnd + 1 do
+                pStep[l] = cs; pCrafts[l] = cc; pMat[l] = cm; pSellV[l] = cv; pSellA[l] = ca
+                if l <= validEnd then
+                    local chance = L.CalcSkillUpChance(gray, yellow, l)
+                    if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
+                        if     rec.skillType == "optimal" then chance = 1
+                        elseif rec.skillType == "easy"    then chance = 0.6
+                        elseif rec.skillType == "medium"  then chance = 0.3
+                        end
+                    end
+                    if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
+                    if chance > 0 then
+                        local ec  = 1 / chance
+                        -- Material cost at this skill level.
+                        -- With tiered pricing: use the marginal price from the curve at the
+                        -- point where cumEC*count units have already been consumed.
+                        -- This makes the prefix sum reflect actual price escalation as crafts
+                        -- accumulate, rather than a single averaged cost.
+                        local matCostAtL = rec.matCost
+                        if useTieredPricing then
+                            matCostAtL = 0
+                            local fallback = false
+                            for _, r in ipairs(rec.reagents or {}) do
+                                local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+                                if id then
+                                    local tierPrice = L.GetTierPriceAtCumQty(id, cumEC * r.count)
+                                    matCostAtL = matCostAtL + tierPrice * r.count
+                                else
+                                    fallback = true; break
+                                end
+                            end
+                            if fallback then matCostAtL = rec.matCost end
+                        end
+                        local mg  = matCostAtL * ec
+                        local svV = (rec.sellPricePerItem or 0) * numMade * ec
+                        local svA = (rec.ahPricePerItem  or 0) * numMade * ec
+                        local sb  = useAH and svA or svV
+                        cs = cs + (mg - sb); cc = cc + ec; cm = cm + mg; cv = cv + svV; ca = ca + svA
+                        cumEC = cumEC + ec
                     end
                 end
-                if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
-                if chance > 0 then
-                    local ec = 1 / chance
-                    local mg = rec.matCost * ec
-                    local svV = (rec.sellPricePerItem or 0) * numMade * ec
-                    local svA = (rec.ahPricePerItem  or 0) * numMade * ec
-                    local sb  = useAH and svA or svV
-                    cs = cs + (mg - sb); cc = cc + ec; cm = cm + mg; cv = cv + svV; ca = ca + svA
+            end
+            recInfos[ri] = {
+                rec = rec, validStart = validStart, validEnd = validEnd, gray = gray,
+                acqCost = acqCost,
+                pStep = pStep, pCrafts = pCrafts, pMat = pMat, pSellV = pSellV, pSellA = pSellA,
+            }
+        end
+
+        local dp      = {}; for s = targetStart, targetEnd do dp[s] = DPINF end; dp[targetStart] = 0
+        local segPath = {}
+        local best    = {}; for ri = 1, #recInfos do best[ri]  = DPINF end
+        local bestT   = {}; for ri = 1, #recInfos do bestT[ri] = targetStart end
+
+        for s = targetStart + 1, targetEnd do
+            local t = s - 1
+            for ri, info in ipairs(recInfos) do
+                if t >= info.validStart and t <= info.validEnd and dp[t] < DPINF and info.pStep[t] then
+                    local val = dp[t] - info.pStep[t]
+                    if val < best[ri] then best[ri] = val; bestT[ri] = t end
+                end
+            end
+            for ri, info in ipairs(recInfos) do
+                if s <= info.gray and info.pStep[s] and best[ri] < DPINF then
+                    local candidate = info.acqCost + info.pStep[s] + best[ri]
+                    if candidate < dp[s] then
+                        dp[s] = candidate
+                        segPath[s] = { ri = ri, startT = bestT[ri], recCostActual = info.acqCost }
+                    end
                 end
             end
         end
 
-        recInfos[ri] = {
-            rec = rec, validStart = validStart, validEnd = validEnd, gray = gray,
-            acqCost = acqCost,
-            pStep = pStep, pCrafts = pCrafts, pMat = pMat, pSellV = pSellV, pSellA = pSellA,
-        }
-    end
-
-    -- Step 2: Segment DP.
-    local DPINF = 99999999999
-    local dp       = {}; for s = targetStart, targetEnd do dp[s] = DPINF end; dp[targetStart] = 0
-    local segPath  = {}                     -- segPath[s] = { ri, startT, recCostActual }
-    local best     = {}; for ri = 1, #recInfos do best[ri]  = DPINF end  -- min_t (dp[t]-prefix[t])
-    local bestT    = {}; for ri = 1, #recInfos do bestT[ri] = targetStart end
-
-    for s = targetStart + 1, targetEnd do
-        -- Update running minimums using t = s-1 as a potential segment start.
-        local t = s - 1
-        for ri, info in ipairs(recInfos) do
-            if t >= info.validStart and t <= info.validEnd and dp[t] < DPINF and info.pStep[t] then
-                local val = dp[t] - info.pStep[t]
-                if val < best[ri] then best[ri] = val; bestT[ri] = t end
+        if dp[targetEnd] >= DPINF then
+            local maxReached = targetStart
+            for s = targetStart, targetEnd do
+                if dp[s] < DPINF then maxReached = s end
             end
+            L.Print(string.format("错误: 算法在等级 %d 处中断，无法到达 %d。请检查此时是否缺少可用的后续配方。", maxReached, targetEnd))
+            return nil, 0
         end
-        -- Compute dp[s]: find best recipe r and start t with segment [t, s).
-        for ri, info in ipairs(recInfos) do
-            if s <= info.gray and info.pStep[s] and best[ri] < DPINF then
-                local candidate = info.acqCost + info.pStep[s] + best[ri]
-                if candidate < dp[s] then
-                    dp[s] = candidate
-                    segPath[s] = { ri = ri, startT = bestT[ri], recCostActual = info.acqCost }
+
+        -- Reconstruct route by backtracking.
+        local consolidatedRoute = {}
+        local curr        = targetEnd
+        local seenRecipes = {}
+        while curr > targetStart do
+            local seg = segPath[curr]
+            if not seg then break end
+            local info = recInfos[seg.ri]
+            local rec  = info.rec
+            local t, e = seg.startT, curr
+            local totalMat    = (info.pMat[e]    or 0) - (info.pMat[t]    or 0)
+            local totalSV     = (info.pSellV[e]  or 0) - (info.pSellV[t]  or 0)
+            local totalSA     = (info.pSellA[e]  or 0) - (info.pSellA[t]  or 0)
+            local totalCrafts = (info.pCrafts[e] or 0) - (info.pCrafts[t] or 0)
+            local recCostOnce = 0
+            if not seenRecipes[rec.name] then
+                recCostOnce = seg.recCostActual or 0
+                seenRecipes[rec.name] = true
+            end
+            local useAH    = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
+            local sellBack = useAH and totalSA or totalSV
+            table.insert(consolidatedRoute, 1, {
+                startSkill          = t,
+                endSkill            = e,
+                recipe              = rec,
+                totalCrafts         = totalCrafts,
+                totalMatCost        = totalMat,
+                totalSellBackVendor = totalSV,
+                totalSellBackAH     = totalSA,
+                totalRecCost        = recCostOnce,
+                recSource           = rec.acqSource,
+                segmentTotalCost    = recCostOnce + totalMat - sellBack,
+            })
+            curr = t
+        end
+        return consolidatedRoute, dp[targetEnd]
+    end -- end runDP
+
+    -- Round 1: standard benchmark prices.
+    local effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
+    local route, totalCost = runDP(effectiveCost)
+
+    -- Tiered pricing: iterate up to TieredPricingMaxRounds, recomputing material costs from
+    -- route quantities each time; stop when totalCost no longer improves.
+    if route and db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve) then
+        local maxRounds = (type(db.TieredPricingMaxRounds) == "number" and db.TieredPricingMaxRounds > 0)
+            and math.min(100, math.floor(db.TieredPricingMaxRounds)) or 10
+        local prevCost = totalCost
+        for _ = 1, maxRounds - 1 do
+            local qtyMap = {}
+            for _, seg in ipairs(route) do
+                for _, r in ipairs(seg.recipe.reagents or {}) do
+                    local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+                    if id then qtyMap[id] = (qtyMap[id] or 0) + math.ceil(r.count * seg.totalCrafts) end
                 end
             end
+            local baseOverride = {}
+            for id, qty in pairs(qtyMap) do
+                if db.AHPriceCurve[id] then
+                    local tp = L.GetMarginalCostForQty(id, qty)
+                    if tp and tp > 0 then baseOverride[id] = tp end
+                end
+            end
+            if not next(baseOverride) then break end
+            effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes, baseOverride)
+            local route2, totalCost2 = runDP(effectiveCost)
+            if not route2 or totalCost2 >= prevCost then break end
+            route, totalCost, prevCost = route2, totalCost2, totalCost2
         end
     end
 
-    if dp[targetEnd] >= DPINF then
-        local maxReached = targetStart
-        for s = targetStart, targetEnd do
-            if dp[s] < DPINF then maxReached = s end
-        end
-        L.Print(string.format("错误: 算法在等级 %d 处中断，无法到达 %d。请检查此时是否缺少可用的后续配方。", maxReached, targetEnd))
+    if not route then
         return nil, profName, targetStart, targetEnd, 0
     end
-
-    -- Step 3: Reconstruct segments by backtracking through segPath.
-    -- Each segPath entry represents a contiguous skill segment [startT, endSkill).
-    -- Recipe acquisition cost is charged at most once per recipe name (display only).
-    local consolidatedRoute = {}
-    local curr        = targetEnd
-    local seenRecipes = {}
-    while curr > targetStart do
-        local seg = segPath[curr]
-        if not seg then break end
-        local info = recInfos[seg.ri]
-        local rec  = info.rec
-        local t, e = seg.startT, curr
-        -- Totals for this segment from prefix arrays.
-        local totalMat    = (info.pMat[e]    or 0) - (info.pMat[t]    or 0)
-        local totalSV     = (info.pSellV[e]  or 0) - (info.pSellV[t]  or 0)
-        local totalSA     = (info.pSellA[e]  or 0) - (info.pSellA[t]  or 0)
-        local totalCrafts = (info.pCrafts[e] or 0) - (info.pCrafts[t] or 0)
-        -- Recipe cost once per name across entire route.
-        local recCostOnce = 0
-        if not seenRecipes[rec.name] then
-            recCostOnce = seg.recCostActual or 0
-            seenRecipes[rec.name] = true
-        end
-        local useAH    = (db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])
-        local sellBack = useAH and totalSA or totalSV
-        table.insert(consolidatedRoute, 1, {
-            startSkill          = t,
-            endSkill            = e,
-            recipe              = rec,
-            totalCrafts         = totalCrafts,
-            totalMatCost        = totalMat,
-            totalSellBackVendor = totalSV,
-            totalSellBackAH     = totalSA,
-            totalRecCost        = recCostOnce,
-            recSource           = rec.acqSource,
-            segmentTotalCost    = recCostOnce + totalMat - sellBack,
-        })
-        curr = t
-    end
-
-    return consolidatedRoute, profName, targetStart, targetEnd, dp[targetEnd]
+    return route, profName, targetStart, targetEnd, totalCost
 end
