@@ -890,7 +890,7 @@ function L.ShowResultList()
                 if id and db then
                     local fragCost = (db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                     local ahCost = (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
-                    local vendorCost = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0) and db.VendorPrices[id] or 999999999
+                    local vendorCost = (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
                     local best = math.min(ahCost, vendorCost, fragCost)
                     if fragCost < 999999999 and best == fragCost then
                         fragmentCount = fragmentCount + math.ceil(r.count * seg.totalCrafts) * (db.FragmentCosts[id] or 0)
@@ -937,7 +937,7 @@ function L.ShowResultList()
                 local totQty = math.ceil(r.count * seg.totalCrafts)
                 local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                 local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
-                local vendorCost = (id and db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0) and db.VendorPrices[id] or 999999999
+                local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
                 local best = math.min(ahCost, vendorCost, fragCost)
                 local useFrag = (fragCost < 999999999 and best == fragCost)
                 if useFrag then
@@ -1125,7 +1125,7 @@ function L.ShowExportFrame()
             local totQty = math.ceil(r.count * seg.totalCrafts)
             local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
             local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
-            local vendorCost = (id and db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0) and db.VendorPrices[id] or 999999999
+            local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
             local best = math.min(ahCost, vendorCost, fragCost)
             local useFrag = (fragCost < 999999999 and best == fragCost)
             if useFrag then

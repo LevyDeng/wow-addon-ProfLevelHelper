@@ -47,7 +47,7 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
         -- sell price * 4 as a proxy produces an incorrect tiny price that overrides the real AH price
         -- on the second call (once GetItemInfo is cached), causing the same recipe to flip from
         -- "拍卖行购买" to "NPC 购买" between calls.
-        local vendorPrice = db.VendorPrices and db.VendorPrices[id]
+        local vendorPrice = ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id]
         if vendorPrice and vendorPrice > 0 then
             if cost == nil or vendorPrice < cost then
                 cost = vendorPrice

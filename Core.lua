@@ -399,7 +399,7 @@ function L.GetAHQuantity(itemId)
 end
 
 -- Resolve item name or id to price. Returns copper.
--- If item has NPC vendor price (VendorPrices), use it directly; else use AH/fragment/GetItemInfo (min).
+-- NPC vendor price only from VendorPrices.lua (ProfLevelHelper_VendorPrices); not from addon-recorded or GetItemInfo.
 function L.GetItemPrice(itemNameOrLinkOrId)
     local id = type(itemNameOrLinkOrId) == "number" and itemNameOrLinkOrId or nil
     if type(itemNameOrLinkOrId) == "string" then
@@ -412,8 +412,9 @@ function L.GetItemPrice(itemNameOrLinkOrId)
     end
     if not id then return 0 end
     local db = ProfLevelHelperDB
-    if db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0 then
-        return db.VendorPrices[id]
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[id] and vp[id] > 0 then
+        return vp[id]
     end
     local best = nil
     if db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0 then
@@ -423,33 +424,42 @@ function L.GetItemPrice(itemNameOrLinkOrId)
         local fc = db.FragmentCosts[id] * db.FragmentValueInCopper
         if fc > 0 and (not best or fc < best) then best = fc end
     end
-    if best then return best end
-    if GetItemInfo then
-        local _, _, _, _, _, _, _, _, _, _, vendorPrice = GetItemInfo(id)
-        if vendorPrice and vendorPrice > 0 then return vendorPrice * 4 end
+    -- Route-produced: when this item is made in the current route, its sell-back is an option (min = prefer AH if cheaper).
+    if db.RouteProducedSellBack and db.RouteProducedSellBack[id] and db.RouteProducedSellBack[id] > 0 then
+        local rp = db.RouteProducedSellBack[id]
+        if not best or rp < best then best = rp end
     end
+    if best then return best end
     return 0
 end
 
 -- Returns the MARGINAL unit price when cumUnits have already been purchased.
 -- Walks the price curve to find which tier the next unit falls into.
--- NPC-sold items (VendorPrices) always use their fixed price; AH curve is never used for them.
+-- NPC-sold items (VendorPrices.lua only) use fixed price; AH curve not used for them.
 function L.GetTierPriceAtCumQty(itemID, cumUnits)
     local db = ProfLevelHelperDB
     if not db or not itemID then return 0 end
-    if db.VendorPrices and db.VendorPrices[itemID] and db.VendorPrices[itemID] > 0 then
-        return db.VendorPrices[itemID]
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then
+        return vp[itemID]
     end
     local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
+    local tierPrice
     if not curve or #curve == 0 then
-        return L.GetItemPrice(itemID) or 0
+        tierPrice = L.GetItemPrice(itemID) or 0
+    else
+        local accum = 0
+        for _, tier in ipairs(curve) do
+            accum = accum + tier[1]
+            if cumUnits < accum then tierPrice = tier[2]; break end
+        end
+        tierPrice = tierPrice or curve[#curve][2]
     end
-    local accum = 0
-    for _, tier in ipairs(curve) do
-        accum = accum + tier[1]
-        if cumUnits < accum then return tier[2] end
+    if db.RouteProducedSellBack and db.RouteProducedSellBack[itemID] and db.RouteProducedSellBack[itemID] > 0 then
+        local rp = db.RouteProducedSellBack[itemID]
+        if rp < (tierPrice or 999999999) then tierPrice = rp end
     end
-    return curve[#curve][2]
+    return tierPrice or 0
 end
 
 -- Returns average cost per unit when buying `qty` units using the stored AH price curve.
@@ -458,8 +468,9 @@ end
 function L.GetMarginalCostForQty(itemID, qty)
     local db = ProfLevelHelperDB
     if not db or not itemID or not qty or qty <= 0 then return 0 end
-    if db.VendorPrices and db.VendorPrices[itemID] and db.VendorPrices[itemID] > 0 then
-        return db.VendorPrices[itemID]
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then
+        return vp[itemID]
     end
     local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
     if not curve or #curve == 0 then
@@ -504,6 +515,10 @@ function L.ComputeEffectiveMaterialCosts(recipes, baseOverride)
 
     for id in pairs(itemIds) do
         local p = (baseOverride and baseOverride[id]) or L.GetItemPrice(id)
+        if db.RouteProducedSellBack and db.RouteProducedSellBack[id] and db.RouteProducedSellBack[id] > 0 then
+            local rp = db.RouteProducedSellBack[id]
+            if not p or rp < p then p = rp end
+        end
         -- Treat price=0 as "no data" (EFF_COST_UNKNOWN), not free.
         effectiveCost[id] = (p and p > 0) and p or EFF_COST_UNKNOWN
     end
@@ -556,6 +571,26 @@ function L.CraftCostWithEffective(reagents, effectiveCost)
     return cost
 end
 
+-- Build map itemID -> sell-back price (copper) for items produced in the given route.
+-- Used so GetItemPrice can use min(market, sellBack) and prefer AH when cheaper.
+function L.BuildRouteProducedSellBack(route, db)
+    local map = {}
+    if not route or not db then return map end
+    for _, seg in ipairs(route) do
+        local rec = seg.recipe
+        local id = rec.createdItemID
+        if id and (rec.ahPricePerItem or rec.sellPricePerItem) then
+            local useAH = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[id]))
+                or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[id]))
+            local sellBack = useAH and (rec.ahPricePerItem or 0) or (rec.sellPricePerItem or 0)
+            if sellBack > 0 then
+                if not map[id] or sellBack < map[id] then map[id] = sellBack end
+            end
+        end
+    end
+    return map
+end
+
 -- Calculate global cheapest route using Dynamic Programming (Shortest Path).
 --
 -- When db.UseTieredPricing is active:
@@ -583,6 +618,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     end
 
     local db     = ProfLevelHelperDB
+    db.RouteProducedSellBack = {}
     local DPINF  = 99999999999
     -- Pre-compute once: whether to use per-level tier pricing in prefix sums.
     local useTieredPricing = db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve)
@@ -630,7 +666,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     if not id then allowed = false; break end
                     local hasPrice = (effectiveCost[id] and effectiveCost[id] > 0 and effectiveCost[id] < EFF_COST_UNKNOWN)
                         or (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0)
-                        or (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+                        or (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0)
                         or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
                     if not hasPrice then allowed = false; break end
                 end
@@ -643,7 +679,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 for _, r in ipairs(rec.reagents or {}) do
                     local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
                     if id then
-                        local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+                        local hasVendorOrFrag = (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0)
                             or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
                         if not hasVendorOrFrag and (db.AHQty[id] or 0) < minQty then
                             allowed = false; break
@@ -658,7 +694,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 for _, r in ipairs(rec.reagents or {}) do
                     local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
                     if id then
-                        local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+                        local hasVendorOrFrag = (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0)
                             or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
                         if not hasVendorOrFrag and (db.AHQty[id] or 0) < 1 then
                             allowed = false; break
@@ -817,6 +853,14 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
     local route, totalCost = runDP(effectiveCost)
 
+    -- Refinement: use route-produced sell-back as material cost option (min with AH so AH preferred when cheaper).
+    if route then
+        db.RouteProducedSellBack = L.BuildRouteProducedSellBack(route, db)
+        effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
+        local route2, totalCost2 = runDP(effectiveCost)
+        if route2 and totalCost2 < totalCost then route, totalCost = route2, totalCost2 end
+    end
+
     -- Tiered pricing: iterate up to TieredPricingMaxRounds, recomputing material costs from
     -- route quantities each time; stop when totalCost no longer improves.
     if route and db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve) then
@@ -824,6 +868,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             and math.min(100, math.floor(db.TieredPricingMaxRounds)) or 10
         local prevCost = totalCost
         for _ = 1, maxRounds - 1 do
+            db.RouteProducedSellBack = L.BuildRouteProducedSellBack(route, db)
             local qtyMap = {}
             for _, seg in ipairs(route) do
                 for _, r in ipairs(seg.recipe.reagents or {}) do
