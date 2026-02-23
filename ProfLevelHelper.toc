@@ -8,6 +8,7 @@
 ## SavedVariables: ProfLevelHelperDB
 
 FragmentCosts.lua
+VendorPrices.lua
 ProfLevelHelper.lua
 RecipeCost.lua
 Core.lua

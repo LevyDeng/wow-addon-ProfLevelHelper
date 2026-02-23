@@ -398,7 +398,8 @@ function L.GetAHQuantity(itemId)
     return db.AHQty[itemId] or 0
 end
 
--- Resolve item name or id to price: min of AH, vendor, fragment (by FragmentValueInCopper). Returns copper.
+-- Resolve item name or id to price. Returns copper.
+-- If item has NPC vendor price (VendorPrices), use it directly; else use AH/fragment/GetItemInfo (min).
 function L.GetItemPrice(itemNameOrLinkOrId)
     local id = type(itemNameOrLinkOrId) == "number" and itemNameOrLinkOrId or nil
     if type(itemNameOrLinkOrId) == "string" then
@@ -411,13 +412,12 @@ function L.GetItemPrice(itemNameOrLinkOrId)
     end
     if not id then return 0 end
     local db = ProfLevelHelperDB
+    if db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0 then
+        return db.VendorPrices[id]
+    end
     local best = nil
     if db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0 then
         best = db.AHPrices[id]
-    end
-    if db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0 then
-        local v = db.VendorPrices[id]
-        if not best or v < best then best = v end
     end
     if db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0 then
         local fc = db.FragmentCosts[id] * db.FragmentValueInCopper
@@ -433,13 +433,16 @@ end
 
 -- Returns the MARGINAL unit price when cumUnits have already been purchased.
 -- Walks the price curve to find which tier the next unit falls into.
--- Falls back to benchmark AHPrices when no curve exists.
+-- NPC-sold items (VendorPrices) always use their fixed price; AH curve is never used for them.
 function L.GetTierPriceAtCumQty(itemID, cumUnits)
     local db = ProfLevelHelperDB
     if not db or not itemID then return 0 end
+    if db.VendorPrices and db.VendorPrices[itemID] and db.VendorPrices[itemID] > 0 then
+        return db.VendorPrices[itemID]
+    end
     local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
     if not curve or #curve == 0 then
-        return (db.AHPrices and db.AHPrices[itemID]) or 0
+        return L.GetItemPrice(itemID) or 0
     end
     local accum = 0
     for _, tier in ipairs(curve) do
@@ -450,14 +453,17 @@ function L.GetTierPriceAtCumQty(itemID, cumUnits)
 end
 
 -- Returns average cost per unit when buying `qty` units using the stored AH price curve.
--- Falls back to the benchmark AHPrices if no curve is available.
+-- NPC-sold items always use their fixed vendor price.
 -- When qty exceeds total AH supply the last tier price is extrapolated.
 function L.GetMarginalCostForQty(itemID, qty)
     local db = ProfLevelHelperDB
     if not db or not itemID or not qty or qty <= 0 then return 0 end
+    if db.VendorPrices and db.VendorPrices[itemID] and db.VendorPrices[itemID] > 0 then
+        return db.VendorPrices[itemID]
+    end
     local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
     if not curve or #curve == 0 then
-        return (db.AHPrices and db.AHPrices[itemID]) or 0
+        return L.GetItemPrice(itemID) or 0
     end
     local remaining = qty
     local totalCost = 0
@@ -640,6 +646,21 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                         local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
                             or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
                         if not hasVendorOrFrag and (db.AHQty[id] or 0) < minQty then
+                            allowed = false; break
+                        end
+                    end
+                end
+            end
+            -- When tiered pricing is on: do not recommend recipes whose materials are
+            -- sourced from AH but have zero AH quantity (e.g. "柔软的狂鱼肉" not on AH).
+            -- Materials with VendorPrices or FragmentCosts are allowed without AH stock.
+            if allowed and useTiered and db.AHQty and next(db.AHQty) then
+                for _, r in ipairs(rec.reagents or {}) do
+                    local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+                    if id then
+                        local hasVendorOrFrag = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0)
+                            or (db.FragmentCosts and db.FragmentCosts[id] and (db.FragmentValueInCopper or 0) > 0)
+                        if not hasVendorOrFrag and (db.AHQty[id] or 0) < 1 then
                             allowed = false; break
                         end
                     end

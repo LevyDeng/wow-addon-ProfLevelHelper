@@ -868,6 +868,45 @@ local function CreateTradeSkillButton()
     end
 end
 
+-- Show VendorPrices as Lua text for copying into VendorPrices.lua. /plh dumpvendor
+function L.ShowVendorDump()
+    local str = (ProfLevelHelper and ProfLevelHelper.ExportVendorPricesToLuaString and ProfLevelHelper.ExportVendorPricesToLuaString()) or "ProfLevelHelper_VendorPrices = {\n}\n"
+    local f = L.VendorDumpFrame
+    if not f then
+        f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        L.VendorDumpFrame = f
+        f:SetSize(500, 400)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 32, insets = { left = 11, right = 12, top = 12, bottom = 11 } })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("Vendor prices — copy and save as VendorPrices.lua")
+        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        close:SetSize(80, 22)
+        close:SetPoint("BOTTOM", 0, 12)
+        close:SetText("Close")
+        close:SetScript("OnClick", function() f:Hide() end)
+        local eb = CreateFrame("EditBox", nil, f)
+        eb:SetPoint("TOPLEFT", 16, -36)
+        eb:SetPoint("BOTTOMRIGHT", -16, 40)
+        eb:SetMultiLine(true)
+        eb:SetAutoFocus(false)
+        eb:SetFontObject(GameFontHighlightSmall)
+        eb:SetScript("OnEscapePressed", function() f:Hide() end)
+        f.editBox = eb
+    end
+    f.editBox:SetText(str)
+    f.editBox:HighlightText(0, #str)
+    f:Show()
+end
+
 -- Dev only: show FragmentCosts as Lua text for copying into FragmentCosts.lua. /plh dumpfragment
 function L.ShowFragmentDump()
     local str = (ProfLevelHelper and ProfLevelHelper.ExportFragmentCostsToLuaString and ProfLevelHelper.ExportFragmentCostsToLuaString()) or "ProfLevelHelper_FragmentCosts = {\n}\n"

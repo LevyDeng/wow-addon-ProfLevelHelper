@@ -88,22 +88,49 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
     return cost, source
 end
 
+-- Default vendor discount: 0.8 = 80% (8折). Recorded price is divided by this to get "base" price.
+local VENDOR_RECORD_DISCOUNT = 0.8
+
+-- Record NPC vendor buy prices (gold/copper) for items in the currently open merchant window.
+-- Assumes displayed price is reputation-discounted; divides by VENDOR_RECORD_DISCOUNT (default 0.8) to store base price.
+-- Only records items sold for gold (skips fragment/other-currency items).
 function ProfLevelHelper.RecordVendorPrices()
-    if not GetMerchantNumItems then return end
+    if not GetMerchantNumItems then return 0 end
     local db = ProfLevelHelperDB
     db.VendorPrices = db.VendorPrices or {}
+    local count = 0
     for i = 1, GetMerchantNumItems() do
         local link = GetMerchantItemLink(i)
         if link then
             local id = tonumber(link:match("item:(%d+)"))
             if id then
-                local _, _, price = GetMerchantItemInfo(i)
-                if price and price > 0 then
-                    db.VendorPrices[id] = price
+                local _, _, price, quantity = GetMerchantItemInfo(i)
+                local costInfoCount = (GetMerchantItemCostInfo and GetMerchantItemCostInfo(i)) or 0
+                if price and price > 0 and costInfoCount == 0 then
+                    quantity = (quantity and quantity > 0) and quantity or 1
+                    local unitPrice = (price / quantity) / VENDOR_RECORD_DISCOUNT
+                    db.VendorPrices[id] = unitPrice
+                    count = count + 1
                 end
             end
         end
     end
+    return count
+end
+
+-- Export VendorPrices as Lua string for saving to VendorPrices.lua (itemID = copper).
+function ProfLevelHelper.ExportVendorPricesToLuaString()
+    local db = ProfLevelHelperDB
+    if not db or not db.VendorPrices then return "ProfLevelHelper_VendorPrices = {\n}\n" end
+    local t = {}
+    t[#t + 1] = "-- NPC vendor buy prices (copper). Open a vendor, run /plh recordvendor, then /plh dumpvendor; save as VendorPrices.lua.\nProfLevelHelper_VendorPrices = {\n"
+    for id, price in pairs(db.VendorPrices) do
+        if type(id) == "number" and type(price) == "number" and price > 0 then
+            t[#t + 1] = ("  [%d] = %.2f,\n"):format(id, price)
+        end
+    end
+    t[#t + 1] = "}\n"
+    return table.concat(t)
 end
 
 -- Record Titan Fragment exchange: open the fragment vendor, then run /plh recordfragment.

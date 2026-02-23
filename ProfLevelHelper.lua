@@ -15,6 +15,13 @@ local function InitDB()
     db.AHQty = db.AHQty or {}
     db.AHPriceCurve = db.AHPriceCurve or {}
     db.VendorPrices = db.VendorPrices or {}
+    if ProfLevelHelper_VendorPrices and type(ProfLevelHelper_VendorPrices) == "table" then
+        for k, v in pairs(ProfLevelHelper_VendorPrices) do
+            if type(k) == "number" and type(v) == "number" and v > 0 then
+                db.VendorPrices[k] = v
+            end
+        end
+    end
     db.NameToID = db.NameToID or {}
     db.IDToName = db.IDToName or {}
     db.TrainerCosts = db.TrainerCosts or {}
@@ -79,6 +86,11 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
         if L.RecordFragmentCosts then L.RecordFragmentCosts() end
     elseif msg == "dumpfragment" then
         if L.ShowFragmentDump then L.ShowFragmentDump() end
+    elseif msg == "recordvendor" or msg == "vendor" then
+        local n = (ProfLevelHelper and ProfLevelHelper.RecordVendorPrices and ProfLevelHelper.RecordVendorPrices()) or 0
+        L.Print(string.format("已记录当前商人售价（仅金币）: %d 种物品。使用 /plh dumpvendor 导出为 Lua 保存到 VendorPrices.lua。", n))
+    elseif msg == "dumpvendor" then
+        if L.ShowVendorDump then L.ShowVendorDump() end
     elseif msg == "options" or msg == "config" then
         L.OpenOptions()
     elseif msg == "debug" then
@@ -102,6 +114,8 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
         L.Print("  debug   - 打印调试信息（故障排查用）")
         L.Print("  testlearn - 检测配方学习等级来源(ala vs 本插件)，需先打开专业窗口")
         L.Print("  testcost [等级] - 在指定等级打印各配方单次/升1级成本，默认175")
+        L.Print("  recordvendor - 打开商人窗口后执行，记录当前商人售价")
+        L.Print("  dumpvendor - 将已记录的商人售价导出为 Lua，复制保存为 VendorPrices.lua")
         L.Print("Feedback: ptrees@126.com")
     end
 end
