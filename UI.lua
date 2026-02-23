@@ -933,9 +933,8 @@ function L.ShowResultList()
             local net = consumed - (producedQtyMap[id] or 0)
             if net > 0 then netBuyQtyMap[id] = math.ceil(net) end
         end
-        -- buyOrder / fragOrder: first-use order for stable summary listing.
+        -- buyTotals/fragTotals: id -> {name, qty}. purchaseList: unified order (recipe then its materials).
         local buyTotals = {}
-        local buyOrder = {}
         local fragTotals = {}
         local fragOrder = {}
         for i, seg in ipairs(route) do
@@ -975,7 +974,7 @@ function L.ShowResultList()
                 else
                     reqStr = reqStr .. itemName .. "*" .. totQty .. " "
                 end
-                -- Summary: record on first encounter using net buy qty (consumed - produced).
+                -- Summary: record net buy qty for to-buy / fragment (consumed - produced).
                 if id and not buyTotals[id] and not fragTotals[id] then
                     local netQty = netBuyQtyMap[id]
                     if netQty and netQty > 0 then
@@ -983,7 +982,6 @@ function L.ShowResultList()
                             fragOrder[#fragOrder + 1] = id
                             fragTotals[id] = { name = itemName, qty = netQty }
                         else
-                            buyOrder[#buyOrder + 1] = id
                             buyTotals[id] = { name = itemName, qty = netQty }
                         end
                     end
@@ -1070,11 +1068,34 @@ function L.ShowResultList()
             y = y + currentHeight + 16
         end
 
-        -- Summary: materials to buy and fragment exchange totals (two lines).
+        -- Build "要买的" in segment order: each unknown recipe immediately followed by its materials.
+        local purchaseList = {}
+        local addedRecipes = {}
+        local materialAdded = {}
+        for _, seg in ipairs(route) do
+            if not seg.recipe.isKnown then
+                local rName = (seg.recipe.recipeName or seg.recipe.name) or "?"
+                if rName ~= "?" and not addedRecipes[rName] then
+                    addedRecipes[rName] = true
+                    purchaseList[#purchaseList + 1] = { type = "recipe", name = rName }
+                end
+            end
+            for _, r in ipairs(seg.recipe.reagents or {}) do
+                local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+                if id and netBuyQtyMap[id] and not fragTotals[id] and not materialAdded[id] then
+                    materialAdded[id] = true
+                    local t = buyTotals[id]
+                    purchaseList[#purchaseList + 1] = { type = "material", name = t and t.name or ("ID:" .. tostring(id)), qty = netBuyQtyMap[id] }
+                end
+            end
+        end
         local buyLineStr = "要买的: "
-        for _, id in ipairs(buyOrder) do
-            local t = buyTotals[id]
-            if t then buyLineStr = buyLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
+        for _, e in ipairs(purchaseList) do
+            if e.type == "recipe" then
+                buyLineStr = buyLineStr .. e.name .. " "
+            else
+                buyLineStr = buyLineStr .. e.name .. "*" .. e.qty .. " "
+            end
         end
         if buyLineStr == "要买的: " then buyLineStr = "要买的: 无" end
         local fragLineStr = "碎片兑换: "
@@ -1201,7 +1222,6 @@ function L.ShowExportFrame()
         if net > 0 then netBuyQtyMap[id] = math.ceil(net) end
     end
     local buyTotals = {}
-    local buyOrder = {}
     local fragTotals = {}
     local fragOrder = {}
 
@@ -1240,7 +1260,6 @@ function L.ShowExportFrame()
                         fragOrder[#fragOrder + 1] = id
                         fragTotals[id] = { name = itemName, qty = netQty }
                     else
-                        buyOrder[#buyOrder + 1] = id
                         buyTotals[id] = { name = itemName, qty = netQty }
                     end
                 end
@@ -1262,10 +1281,30 @@ function L.ShowExportFrame()
         bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s AH:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), c2s(seg.totalSellBackAH), c2s(segGold), fragCostStr, acq, materialsLine)
     end
 
+    local purchaseList = {}
+    local addedRecipes = {}
+    local materialAdded = {}
+    for _, seg in ipairs(data.route) do
+        if not seg.recipe.isKnown then
+            local rName = (seg.recipe.recipeName or seg.recipe.name) or "?"
+            if rName ~= "?" and not addedRecipes[rName] then
+                addedRecipes[rName] = true
+                purchaseList[#purchaseList + 1] = { type = "recipe", name = rName }
+            end
+        end
+        for _, r in ipairs(seg.recipe.reagents or {}) do
+            local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+            if id and netBuyQtyMap[id] and not fragTotals[id] and not materialAdded[id] then
+                materialAdded[id] = true
+                local t = buyTotals[id]
+                purchaseList[#purchaseList + 1] = { type = "material", name = t and t.name or ("ID:" .. tostring(id)), qty = netBuyQtyMap[id] }
+            end
+        end
+    end
     local buyLineStr = "要买的: "
-    for _, id in ipairs(buyOrder) do
-        local t = buyTotals[id]
-        if t then buyLineStr = buyLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
+    for _, e in ipairs(purchaseList) do
+        if e.type == "recipe" then buyLineStr = buyLineStr .. e.name .. " "
+        else buyLineStr = buyLineStr .. e.name .. "*" .. e.qty .. " " end
     end
     if buyLineStr == "要买的: " then buyLineStr = "要买的: 无" end
     local fragLineStr = "碎片兑换: "
