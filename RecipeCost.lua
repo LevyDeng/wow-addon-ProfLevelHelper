@@ -64,9 +64,11 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
         checkPrice(GetRecipeItemID(rec.recipeLink))
     end
 
-    if rec.isTrainer and rec.trainPrice and rec.trainPrice >= 0 then
-        if cost == nil or rec.trainPrice < cost then
-            cost = rec.trainPrice
+    -- Trust ala's isTrainer: if true, treat as trainer recipe even when trainPrice is missing (e.g. 0).
+    if rec.isTrainer then
+        local tp = (type(rec.trainPrice) == "number" and rec.trainPrice >= 0) and rec.trainPrice or 0
+        if cost == nil or tp < cost then
+            cost = tp
             source = "训练师学习"
         end
     end
@@ -83,6 +85,16 @@ function ProfLevelHelper.GetRecipeAcquisitionCost(rec)
 
     if cost == nil and (rec.recipeItemIDs or rec.recipeLink) then
         source = "需打怪或购买(价格未知)"
+    end
+
+    -- Recipes with no recipe item (learned directly from trainer) and a learn level are trainer recipes.
+    -- ala may not set isTrainer for some recipes; avoid marking them as unknown.
+    if source == "未知来源" or source == "需打怪或购买(价格未知)" then
+        local noRecipeItem = not rec.recipeItemIDs or type(rec.recipeItemIDs) ~= "table" or #rec.recipeItemIDs == 0
+        if noRecipeItem and rec.learn and type(rec.learn) == "number" then
+            source = "训练师学习"
+            if cost == nil then cost = 0 end
+        end
     end
 
     return cost, source

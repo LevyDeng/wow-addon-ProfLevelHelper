@@ -633,7 +633,6 @@ function L.ShowResultList()
             return str
         end
 
-        f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测花费 " .. CopperToGold(totalCost) .. ")") or "推荐列表")
         f.ahTimeLabel:SetText("AH data updated: " .. L.FormatAHScanTime())
         local content = f.content
         local scroll = f.scroll
@@ -647,6 +646,34 @@ function L.ShowResultList()
         content.lines = {}
         content.segmentBtns = {}
 
+        local db = ProfLevelHelperDB
+        local fragVal = (db and db.FragmentValueInCopper) and db.FragmentValueInCopper or 0
+        local totalGold = 0
+        local totalFragments = 0
+        for _, seg in ipairs(route) do
+            local fragmentCount = 0
+            for _, r in ipairs(seg.recipe.reagents or {}) do
+                local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+                if id and db then
+                    local fragCost = (db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                    local ahCost = (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                    local vendorCost = (db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0) and db.VendorPrices[id] or 999999999
+                    local best = math.min(ahCost, vendorCost, fragCost)
+                    if fragCost < 999999999 and best == fragCost then
+                        fragmentCount = fragmentCount + math.ceil(r.count * seg.totalCrafts) * (db.FragmentCosts[id] or 0)
+                    end
+                end
+            end
+            local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
+            local sellback = (db and db.SellBackMethod == "ah") and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+            totalGold = totalGold + (seg.totalRecCost or 0) + goldMat - sellback
+            totalFragments = totalFragments + fragmentCount
+        end
+        local titleFragStr = totalFragments > 0 and (tostring(math.floor(totalFragments + 0.5)) .. " 碎片") or "0 碎片"
+        f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测 金钱: " .. CopperToGold(totalGold) .. "  碎片: " .. titleFragStr .. ")") or "推荐列表")
+
+        totalGold = 0
+        totalFragments = 0
         local y = 0
         for i, seg in ipairs(route) do
             local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -655,25 +682,50 @@ function L.ShowResultList()
             line:SetJustifyH("LEFT")
 
             local reqStr = ""
+            local fragStr = ""
+            local fragmentCount = 0
             local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
             for _, r in ipairs(seg.recipe.reagents or {}) do
+                local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
                 local itemName = r.name
-                if not itemName and r.itemID then
+                if not itemName and id then
                     if alaAgent and alaAgent.item_name then
-                        itemName = alaAgent.item_name(r.itemID)
+                        itemName = alaAgent.item_name(id)
                     end
                     if not itemName then
-                        local iname = GetItemInfo(r.itemID)
+                        local iname = GetItemInfo(id)
                         if iname then itemName = iname end
                     end
                 end
                 if not itemName then
-                    itemName = "ID:" .. tostring(r.itemID)
+                    itemName = "ID:" .. tostring(id or r.itemID)
                 end
                 local totQty = math.ceil(r.count * seg.totalCrafts)
-                reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+                local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                local vendorCost = (id and db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0) and db.VendorPrices[id] or 999999999
+                local best = math.min(ahCost, vendorCost, fragCost)
+                local useFrag = (fragCost < 999999999 and best == fragCost)
+                if useFrag then
+                    fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
+                    fragStr = fragStr .. itemName .. "*" .. totQty .. " "
+                else
+                    reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+                end
             end
-            if reqStr == "" then reqStr = "无或由材料制成" end
+            if reqStr == "" then reqStr = "无" end
+            local materialsLine = reqStr
+            if fragStr ~= "" then
+                materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
+            end
+
+            local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
+            local sellback = (db and db.SellBackMethod == "ah") and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+            local segGold = (seg.totalRecCost or 0) + goldMat - sellback
+            totalGold = totalGold + segGold
+            totalFragments = totalFragments + fragmentCount
+            local goldStr = CopperToGold(segGold)
+            local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. " 碎片") or "0 碎片"
 
             local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
             if not seg.recipe.isKnown then
@@ -682,11 +734,12 @@ function L.ShowResultList()
                 rNameC = "|cff22ff22[已学]|r" .. rNameC
             end
 
-            line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作: %s | 回血(卖NPC: %s | AH: %s) | 净花费: %s\n  材料: %s"):format(
+            line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作(金钱): %s | 制作(碎片): %s | 回血(卖NPC: %s | AH: %s) | 净花费 金钱: %s 碎片: %s\n  材料: %s"):format(
                 seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts,
-                CopperToGold(seg.totalRecCost or 0), CopperToGold(seg.totalMatCost or 0),
-                CopperToGold(seg.totalSellBackVendor or 0), CopperToGold(seg.totalSellBackAH or 0), CopperToGold(seg.segmentTotalCost or 0),
-                reqStr))
+                CopperToGold(seg.totalRecCost or 0), CopperToGold(goldMat), fragCostStr,
+                CopperToGold(seg.totalSellBackVendor or 0), CopperToGold(seg.totalSellBackAH or 0),
+                goldStr, fragCostStr,
+                materialsLine))
             line:SetWidth(scroll:GetWidth() - 24)
             line:Show()
 
@@ -721,7 +774,8 @@ function L.ShowResultList()
         table.insert(content.lines, sumLine)
         sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
         sumLine:SetJustifyH("LEFT")
-        sumLine:SetText("============\n总计预计花费: " .. CopperToGold(totalCost) .. "\n============")
+        local totalFragStr = totalFragments > 0 and (tostring(math.floor(totalFragments + 0.5)) .. " 碎片") or "0 碎片"
+        sumLine:SetText("============\n总计 金钱: " .. CopperToGold(totalGold) .. "  碎片: " .. totalFragStr .. "\n============")
         sumLine:Show()
 
         y = y + 80
@@ -788,36 +842,59 @@ function L.ShowExportFrame()
         close:SetScript("OnClick", function() f:Hide() end)
     end
     
-    local c = data.totalCost
-    local g = math.floor(c / 10000)
-    local s = math.floor((c % 10000) / 100)
-    local co = math.floor(c % 100)
-    local costStr = string.format("%d金 %d银 %d铜", g, s, co)
-    
     local ahTimeStr = L.FormatAHScanTime and L.FormatAHScanTime() or "Never"
-    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计花费: %s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, costStr, ahTimeStr)
     local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+    local db = ProfLevelHelperDB
+    local fragVal = (db and db.FragmentValueInCopper) and db.FragmentValueInCopper or 0
+    local function c2s(c) local C = math.floor((c or 0) + 0.5); local g,s,co = math.floor(C/10000), math.floor((C%10000)/100), math.floor(C%100); return string.format("%d金%d银%d铜", g, s, co) end
 
+    local exportTotalGold = 0
+    local exportTotalFragments = 0
+    local bodyTxt = ""
     for _, seg in ipairs(data.route) do
         local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
         local reqStr = ""
+        local fragStr = ""
+        local fragmentCount = 0
         for _, r in ipairs(seg.recipe.reagents or {}) do
+            local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
             local itemName = r.name
-            if not itemName and r.itemID then
-                if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(r.itemID) end
-                if not itemName then local iname = GetItemInfo(r.itemID) if iname then itemName = iname end end
+            if not itemName and id then
+                if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(id) end
+                if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
             end
-            if not itemName then itemName = "ID:" .. tostring(r.itemID) end
+            if not itemName then itemName = "ID:" .. tostring(id or r.itemID) end
             local totQty = math.ceil(r.count * seg.totalCrafts)
-            reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+            local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+            local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+            local vendorCost = (id and db.VendorPrices and db.VendorPrices[id] and db.VendorPrices[id] > 0) and db.VendorPrices[id] or 999999999
+            local best = math.min(ahCost, vendorCost, fragCost)
+            local useFrag = (fragCost < 999999999 and best == fragCost)
+            if useFrag then
+                fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
+                fragStr = fragStr .. itemName .. "*" .. totQty .. " "
+            else
+                reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+            end
         end
-        if reqStr == "" then reqStr = "无或由材料制成" end
-        
+        if reqStr == "" then reqStr = "无" end
+        local materialsLine = reqStr
+        if fragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr end
+
+        local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
+        local sellback = (db and db.SellBackMethod == "ah") and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+        local segGold = (seg.totalRecCost or 0) + goldMat - sellback
+        local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. "碎片") or "0碎片"
         local acq = seg.recSource and ("来源:"..seg.recSource) or ""
-        local function c2s(c) local C = math.floor((c or 0) + 0.5); local g,s,co = math.floor(C/10000), math.floor((C%10000)/100), math.floor(C%100); return string.format("%d金%d银%d铜", g, s, co) end
-        txt = txt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作:%s 回血(卖NPC:%s AH:%s) 净花费:%s | %s - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(seg.totalMatCost), c2s(seg.totalSellBackVendor), c2s(seg.totalSellBackAH), c2s(seg.segmentTotalCost), acq, reqStr)
+        exportTotalGold = exportTotalGold + segGold
+        exportTotalFragments = exportTotalFragments + fragmentCount
+
+        bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s AH:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), c2s(seg.totalSellBackAH), c2s(segGold), fragCostStr, acq, materialsLine)
     end
-    
+
+    local totalFragStr = exportTotalFragments > 0 and (tostring(math.floor(exportTotalFragments + 0.5)) .. "碎片") or "0碎片"
+    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 金钱: %s  碎片: %s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalGold), totalFragStr, ahTimeStr) .. bodyTxt
+
     f.editBox:SetText(txt)
     f.editBox:HighlightText()
     f:Show()
