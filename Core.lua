@@ -6,6 +6,8 @@
 
 local L = ProfLevelHelper
 local EFF_COST_UNKNOWN = 999999999
+-- AH cut: player receives 95% of listing price (5% tax).
+local AH_TAX_FACTOR = 0.95
 
 -- Skill-up chance: (G - X) / (G - Y), clamp to [0, 1]. Orange = 1, Gray = 0.
 function L.CalcSkillUpChance(graySkill, yellowSkill, playerSkill)
@@ -366,13 +368,13 @@ function L.TestCostAtSkill(skill)
                 local expectedCrafts = 1 / chance
                 local numMade = rec.numMade or 1
                 local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
-                local sellBackAH = (rec.ahPricePerItem or 0) * numMade * expectedCrafts
+                local sellBackAH = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * expectedCrafts
                 local useAH = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
                 local sellBack = useAH and sellBackAH or sellBackVendor
                 local matGross = rec.matCost * expectedCrafts
                 local stepCost = matGross - sellBack
                 local matPerCraft = rec.matCost
-                local sellPerCraft = (useAH and (rec.ahPricePerItem or 0) or (rec.sellPricePerItem or 0)) * numMade
+                local sellPerCraft = (useAH and (rec.ahPricePerItem or 0) * AH_TAX_FACTOR or (rec.sellPricePerItem or 0)) * numMade
                 L.Print(string.format("  %s | 单次: 材料%d铜 回血%d铜 净%d铜 | 升1级: 期望%.2f次 净花费%d铜", rec.name, matPerCraft, sellPerCraft, matPerCraft - sellPerCraft, expectedCrafts, stepCost))
             end
         end
@@ -575,7 +577,7 @@ function L.BuildRouteProducedInfo(route, db)
             local qty = (rec.numMade or 1) * seg.totalCrafts
             produced[rec.createdItemID] = (produced[rec.createdItemID] or 0) + qty
             local vendor = rec.sellPricePerItem or 0
-            local ah     = rec.ahPricePerItem   or 0
+            local ah     = (rec.ahPricePerItem   or 0) * AH_TAX_FACTOR
             local sb = math.max(vendor, ah)
             if sb > 0 then
                 sbPrice[rec.createdItemID] = math.max(sbPrice[rec.createdItemID] or 0, sb)
@@ -838,7 +840,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                         end
                         local mg  = matCostAtL * ec
                         local svV = (rec.sellPricePerItem or 0) * numMade * ec
-                        local svA = (rec.ahPricePerItem  or 0) * numMade * ec
+                        local svA = (rec.ahPricePerItem  or 0) * AH_TAX_FACTOR * numMade * ec
                         local sb  = useAH and svA or svV
                         cs = cs + (mg - sb); cc = cc + ec; cm = cm + mg; cv = cv + svV; ca = ca + svA
                         cumEC = cumEC + ec
