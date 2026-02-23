@@ -143,7 +143,7 @@ function L.UpdateScanButtonState(customText)
         btn:SetText(customText or "扫描中...")
     else
         btn:SetEnabled(true)
-        btn:SetText("扫描拍卖行")
+        btn:SetText("ProfLevelHelper扫描")
     end
 end
 
@@ -1426,6 +1426,34 @@ else
         if addonName == "Blizzard_TradeSkillUI" then
             CreateTradeSkillButton()
             self:UnregisterEvent("ADDON_LOADED")
+        end
+    end)
+end
+
+-- Scan button on Auction House frame (above the AH window) so user can scan without opening options.
+local function CreateAHScanButton()
+    if L.AHScanButtonOnAH or not AuctionFrame then return end
+    LoadAddOn("Blizzard_AuctionUI")
+    if not AuctionFrame then return end
+    local btn = CreateFrame("Button", "ProfLevelHelperAHScanBtn", AuctionFrame, "UIPanelButtonTemplate")
+    L.AHScanButtonOnAH = btn
+    btn:SetSize(140, 22)
+    btn:SetPoint("BOTTOM", AuctionFrame, "TOP", 0, 4)
+    btn:SetText("ProfLevelHelper扫描")
+    btn:SetScript("OnClick", function()
+        if L.ScanAH then L.ScanAH() end
+    end)
+    -- Sync state when scan runs (same as options-panel button).
+    L.ScanAHButton = L.ScanAHButton or btn
+end
+
+do
+    local ahFrame = CreateFrame("Frame")
+    ahFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
+    ahFrame:SetScript("OnEvent", function()
+        CreateAHScanButton()
+        if L.AHScanButtonOnAH and L.UpdateScanButtonState then
+            L.UpdateScanButtonState()
         end
     end)
 end
