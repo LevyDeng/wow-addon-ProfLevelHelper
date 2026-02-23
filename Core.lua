@@ -424,11 +424,6 @@ function L.GetItemPrice(itemNameOrLinkOrId)
         local fc = db.FragmentCosts[id] * db.FragmentValueInCopper
         if fc > 0 and (not best or fc < best) then best = fc end
     end
-    -- Route-produced: when this item is made in the current route, its sell-back is an option (min = prefer AH if cheaper).
-    if db.RouteProducedSellBack and db.RouteProducedSellBack[id] and db.RouteProducedSellBack[id] > 0 then
-        local rp = db.RouteProducedSellBack[id]
-        if not best or rp < best then best = rp end
-    end
     if best then return best end
     return 0
 end
@@ -454,10 +449,6 @@ function L.GetTierPriceAtCumQty(itemID, cumUnits)
             if cumUnits < accum then tierPrice = tier[2]; break end
         end
         tierPrice = tierPrice or curve[#curve][2]
-    end
-    if db.RouteProducedSellBack and db.RouteProducedSellBack[itemID] and db.RouteProducedSellBack[itemID] > 0 then
-        local rp = db.RouteProducedSellBack[itemID]
-        if rp < (tierPrice or 999999999) then tierPrice = rp end
     end
     return tierPrice or 0
 end
@@ -515,10 +506,6 @@ function L.ComputeEffectiveMaterialCosts(recipes, baseOverride)
 
     for id in pairs(itemIds) do
         local p = (baseOverride and baseOverride[id]) or L.GetItemPrice(id)
-        if db.RouteProducedSellBack and db.RouteProducedSellBack[id] and db.RouteProducedSellBack[id] > 0 then
-            local rp = db.RouteProducedSellBack[id]
-            if not p or rp < p then p = rp end
-        end
         -- Treat price=0 as "no data" (EFF_COST_UNKNOWN), not free.
         effectiveCost[id] = (p and p > 0) and p or EFF_COST_UNKNOWN
     end
@@ -571,24 +558,103 @@ function L.CraftCostWithEffective(reagents, effectiveCost)
     return cost
 end
 
--- Build map itemID -> sell-back price (copper) for items produced in the given route.
--- Used so GetItemPrice can use min(market, sellBack) and prefer AH when cheaper.
-function L.BuildRouteProducedSellBack(route, db)
-    local map = {}
-    if not route or not db then return map end
+-- Build a map of items that are both produced and consumed within the route.
+-- Returns { [itemID] = { qty = N, price = P } } where:
+--   qty   = min(totalProduced, totalConsumed) -- units available as self-produced supply
+--   price = max(vendorSellBack, ahSellBack)   -- best opportunity cost per unit
+-- This is used by the refinement loop to prepend a self-produced price tier into the AH
+-- price curve, so the DP correctly prices intermediate materials at opportunity cost.
+function L.BuildRouteProducedInfo(route, db)
+    if not route or not db then return {} end
+    local produced = {}
+    local consumed = {}
+    local sbPrice  = {}
     for _, seg in ipairs(route) do
         local rec = seg.recipe
-        local id = rec.createdItemID
-        if id and (rec.ahPricePerItem or rec.sellPricePerItem) then
-            local useAH = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[id]))
-                or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[id]))
-            local sellBack = useAH and (rec.ahPricePerItem or 0) or (rec.sellPricePerItem or 0)
-            if sellBack > 0 then
-                if not map[id] or sellBack < map[id] then map[id] = sellBack end
+        if rec.createdItemID then
+            local qty = (rec.numMade or 1) * seg.totalCrafts
+            produced[rec.createdItemID] = (produced[rec.createdItemID] or 0) + qty
+            local vendor = rec.sellPricePerItem or 0
+            local ah     = rec.ahPricePerItem   or 0
+            local sb = math.max(vendor, ah)
+            if sb > 0 then
+                sbPrice[rec.createdItemID] = math.max(sbPrice[rec.createdItemID] or 0, sb)
+            end
+        end
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
+            if id then
+                consumed[id] = (consumed[id] or 0) + math.ceil(r.count * seg.totalCrafts)
             end
         end
     end
-    return map
+    local rpInfo = {}
+    for id, prod in pairs(produced) do
+        local cons     = consumed[id] or 0
+        local selfUsed = math.min(prod, cons)
+        if selfUsed > 0 and sbPrice[id] and sbPrice[id] > 0 then
+            rpInfo[id] = { qty = selfUsed, price = sbPrice[id] }
+        end
+    end
+    return rpInfo
+end
+
+-- Build merged price curve (route-produced tier + AH curve) sorted cheapest-first.
+-- Used by GetTierPriceAtCumQtyWithRP and GetMarginalCostWithRP.
+local function buildMergedCurve(itemID, rpInfo)
+    local db    = ProfLevelHelperDB
+    local rp    = rpInfo and rpInfo[itemID]
+    local curve = db and db.AHPriceCurve and db.AHPriceCurve[itemID]
+    local merged = {}
+    if rp then merged[#merged + 1] = { rp.qty, rp.price } end
+    if curve then
+        for _, tier in ipairs(curve) do merged[#merged + 1] = { tier[1], tier[2] } end
+    end
+    table.sort(merged, function(a, b) return a[2] < b[2] end)
+    return merged
+end
+
+-- Like GetTierPriceAtCumQty but prepends the route-produced tier from rpInfo.
+-- Returns the marginal price for the unit at cumulative position cumUnits.
+function L.GetTierPriceAtCumQtyWithRP(itemID, cumUnits, rpInfo)
+    if not rpInfo or not rpInfo[itemID] then
+        return L.GetTierPriceAtCumQty(itemID, cumUnits)
+    end
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then return vp[itemID] end
+    local merged = buildMergedCurve(itemID, rpInfo)
+    if #merged == 0 then return L.GetItemPrice(itemID) or 0 end
+    local accum = 0
+    for _, tier in ipairs(merged) do
+        accum = accum + tier[1]
+        if cumUnits < accum then return tier[2] end
+    end
+    return merged[#merged][2]
+end
+
+-- Like GetMarginalCostForQty but prepends the route-produced tier from rpInfo.
+-- Returns the weighted-average cost per unit for buying `qty` total units.
+function L.GetMarginalCostWithRP(itemID, qty, rpInfo)
+    if not rpInfo or not rpInfo[itemID] then
+        return L.GetMarginalCostForQty(itemID, qty)
+    end
+    if not qty or qty <= 0 then return 0 end
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then return vp[itemID] end
+    local merged = buildMergedCurve(itemID, rpInfo)
+    if #merged == 0 then return L.GetItemPrice(itemID) or 0 end
+    local remaining = qty
+    local totalCost = 0
+    local lastPrice = merged[#merged][2]
+    for _, tier in ipairs(merged) do
+        if remaining <= 0 then break end
+        local take = math.min(remaining, tier[1])
+        totalCost = totalCost + take * tier[2]
+        remaining = remaining - take
+        lastPrice = tier[2]
+    end
+    if remaining > 0 then totalCost = totalCost + remaining * lastPrice end
+    return totalCost / qty
 end
 
 -- Calculate global cheapest route using Dynamic Programming (Shortest Path).
@@ -618,11 +684,19 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     end
 
     local db     = ProfLevelHelperDB
-    db.RouteProducedSellBack = {}
     local DPINF  = 99999999999
     -- Pre-compute once: whether to use per-level tier pricing in prefix sums.
     local useTieredPricing = db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve)
     local nameToID = db.NameToID
+
+    -- Mutable upvalue: route-produced info for the current iteration.
+    -- runDP closes over this so getTierPrice can reflect the latest rpInfo
+    -- without passing it as an argument through every call site.
+    local currentRPInfo = {}
+
+    local function getTierPrice(id, cumUnits)
+        return L.GetTierPriceAtCumQtyWithRP(id, cumUnits, currentRPInfo)
+    end
 
     -- -----------------------------------------------------------------------
     -- Inner function: filter allRecipes with given effectiveCost, run the
@@ -754,7 +828,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                             for _, r in ipairs(rec.reagents or {}) do
                                 local id = r.itemID or (r.name and nameToID and nameToID[r.name])
                                 if id then
-                                    local tierPrice = L.GetTierPriceAtCumQty(id, cumEC * r.count)
+                                    local tierPrice = getTierPrice(id, cumEC * r.count)
                                     matCostAtL = matCostAtL + tierPrice * r.count
                                 else
                                     fallback = true; break
@@ -849,26 +923,28 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         return consolidatedRoute, dp[targetEnd]
     end -- end runDP
 
-    -- Round 1: standard benchmark prices.
+    -- Round 1: standard benchmark prices, no route-produced info yet.
     local effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
     local route, totalCost = runDP(effectiveCost)
 
-    -- Refinement: use route-produced sell-back as material cost option (min with AH so AH preferred when cheaper).
+    -- Refinement loop: iteratively refine costs using both tiered AH pricing and
+    -- route-produced opportunity costs.  Runs unconditionally (not only when tiered
+    -- pricing is enabled) because route-produced pricing benefits all users.
+    -- Each round:
+    --   1. Extract route-produced info (items both crafted and consumed in the route).
+    --   2. Build a baseOverride that merges the self-produced tier into the AH curve
+    --      using GetMarginalCostWithRP (weighted average over total consumption qty).
+    --   3. Recompute effectiveCost and re-run DP.
+    --   4. Stop when total cost no longer improves or no override exists.
     if route then
-        db.RouteProducedSellBack = L.BuildRouteProducedSellBack(route, db)
-        effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
-        local route2, totalCost2 = runDP(effectiveCost)
-        if route2 and totalCost2 < totalCost then route, totalCost = route2, totalCost2 end
-    end
-
-    -- Tiered pricing: iterate up to TieredPricingMaxRounds, recomputing material costs from
-    -- route quantities each time; stop when totalCost no longer improves.
-    if route and db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve) then
         local maxRounds = (type(db.TieredPricingMaxRounds) == "number" and db.TieredPricingMaxRounds > 0)
             and math.min(100, math.floor(db.TieredPricingMaxRounds)) or 10
         local prevCost = totalCost
+        local hasTieredData = db.UseTieredPricing and db.AHPriceCurve and next(db.AHPriceCurve)
         for _ = 1, maxRounds - 1 do
-            db.RouteProducedSellBack = L.BuildRouteProducedSellBack(route, db)
+            -- Update currentRPInfo so getTierPrice (used inside runDP prefix sums) reflects
+            -- the latest route's self-produced tiers.
+            currentRPInfo = L.BuildRouteProducedInfo(route, db)
             local qtyMap = {}
             for _, seg in ipairs(route) do
                 for _, r in ipairs(seg.recipe.reagents or {}) do
@@ -878,12 +954,13 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             end
             local baseOverride = {}
             for id, qty in pairs(qtyMap) do
-                if db.AHPriceCurve[id] then
-                    local tp = L.GetMarginalCostForQty(id, qty)
+                local needsOverride = (hasTieredData and db.AHPriceCurve[id]) or currentRPInfo[id]
+                if needsOverride then
+                    local tp = L.GetMarginalCostWithRP(id, qty, currentRPInfo)
                     if tp and tp > 0 then baseOverride[id] = tp end
                 end
             end
-            if not next(baseOverride) then break end
+            if not next(baseOverride) and not next(currentRPInfo) then break end
             effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes, baseOverride)
             local route2, totalCost2 = runDP(effectiveCost)
             if not route2 or totalCost2 >= prevCost then break end

@@ -909,6 +909,35 @@ function L.ShowResultList()
         totalGold = 0
         totalFragments = 0
         local y = 0
+        -- Net buy quantities: total consumed minus total produced in route.
+        -- Items whose net qty <= 0 are fully self-supplied and excluded from the summary.
+        local producedQtyMap = {}
+        for _, seg in ipairs(route) do
+            local cid = seg.recipe and seg.recipe.createdItemID
+            if cid then
+                local qty = (seg.recipe.numMade or 1) * seg.totalCrafts
+                producedQtyMap[cid] = (producedQtyMap[cid] or 0) + qty
+            end
+        end
+        local consumedQtyMap = {}
+        for _, seg in ipairs(route) do
+            for _, r in ipairs(seg.recipe.reagents or {}) do
+                local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+                if id then
+                    consumedQtyMap[id] = (consumedQtyMap[id] or 0) + math.ceil(r.count * seg.totalCrafts)
+                end
+            end
+        end
+        local netBuyQtyMap = {}
+        for id, consumed in pairs(consumedQtyMap) do
+            local net = consumed - (producedQtyMap[id] or 0)
+            if net > 0 then netBuyQtyMap[id] = math.ceil(net) end
+        end
+        -- buyOrder / fragOrder: first-use order for stable summary listing.
+        local buyTotals = {}
+        local buyOrder = {}
+        local fragTotals = {}
+        local fragOrder = {}
         for i, seg in ipairs(route) do
             local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             table.insert(content.lines, line)
@@ -945,6 +974,19 @@ function L.ShowResultList()
                     fragStr = fragStr .. itemName .. "*" .. totQty .. " "
                 else
                     reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+                end
+                -- Summary: record on first encounter using net buy qty (consumed - produced).
+                if id and not buyTotals[id] and not fragTotals[id] then
+                    local netQty = netBuyQtyMap[id]
+                    if netQty and netQty > 0 then
+                        if useFrag then
+                            fragOrder[#fragOrder + 1] = id
+                            fragTotals[id] = { name = itemName, qty = netQty }
+                        else
+                            buyOrder[#buyOrder + 1] = id
+                            buyTotals[id] = { name = itemName, qty = netQty }
+                        end
+                    end
                 end
             end
             if reqStr == "" then reqStr = "无" end
@@ -1028,6 +1070,38 @@ function L.ShowResultList()
             y = y + currentHeight + 16
         end
 
+        -- Summary: materials to buy and fragment exchange totals (two lines).
+        local buyLineStr = "要买的: "
+        for _, id in ipairs(buyOrder) do
+            local t = buyTotals[id]
+            if t then buyLineStr = buyLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
+        end
+        if buyLineStr == "要买的: " then buyLineStr = "要买的: 无" end
+        local fragLineStr = "碎片兑换: "
+        for _, id in ipairs(fragOrder) do
+            local t = fragTotals[id]
+            if t then fragLineStr = fragLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
+        end
+        if fragLineStr == "碎片兑换: " then fragLineStr = "碎片兑换: 无" end
+
+        local buySummaryLine = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        table.insert(content.lines, buySummaryLine)
+        buySummaryLine:SetPoint("TOPLEFT", 0, -(y + 10))
+        buySummaryLine:SetJustifyH("LEFT")
+        buySummaryLine:SetText(buyLineStr)
+        buySummaryLine:SetWidth(scroll:GetWidth() - 20)
+        buySummaryLine:Show()
+        y = y + 10 + buySummaryLine:GetStringHeight()
+
+        local fragSummaryLine = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        table.insert(content.lines, fragSummaryLine)
+        fragSummaryLine:SetPoint("TOPLEFT", 0, -(y + 4))
+        fragSummaryLine:SetJustifyH("LEFT")
+        fragSummaryLine:SetText(fragLineStr)
+        fragSummaryLine:SetWidth(scroll:GetWidth() - 20)
+        fragSummaryLine:Show()
+        y = y + 4 + fragSummaryLine:GetStringHeight()
+
         local sumLine = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
         table.insert(content.lines, sumLine)
         sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
@@ -1106,6 +1180,31 @@ function L.ShowExportFrame()
     local fragVal = (db and db.FragmentValueInCopper) and db.FragmentValueInCopper or 0
     local function c2s(c) local C = math.floor((c or 0) + 0.5); local g,s,co = math.floor(C/10000), math.floor((C%10000)/100), math.floor(C%100); return string.format("%d金%d银%d铜", g, s, co) end
 
+    local producedQtyMap = {}
+    for _, seg in ipairs(data.route) do
+        local cid = seg.recipe and seg.recipe.createdItemID
+        if cid then
+            local qty = (seg.recipe.numMade or 1) * seg.totalCrafts
+            producedQtyMap[cid] = (producedQtyMap[cid] or 0) + qty
+        end
+    end
+    local consumedQtyMap = {}
+    for _, seg in ipairs(data.route) do
+        for _, r in ipairs(seg.recipe.reagents or {}) do
+            local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+            if id then consumedQtyMap[id] = (consumedQtyMap[id] or 0) + math.ceil(r.count * seg.totalCrafts) end
+        end
+    end
+    local netBuyQtyMap = {}
+    for id, consumed in pairs(consumedQtyMap) do
+        local net = consumed - (producedQtyMap[id] or 0)
+        if net > 0 then netBuyQtyMap[id] = math.ceil(net) end
+    end
+    local buyTotals = {}
+    local buyOrder = {}
+    local fragTotals = {}
+    local fragOrder = {}
+
     local exportTotalGold = 0
     local exportTotalFragments = 0
     local bodyTxt = ""
@@ -1134,6 +1233,18 @@ function L.ShowExportFrame()
             else
                 reqStr = reqStr .. itemName .. "*" .. totQty .. " "
             end
+            if id and not buyTotals[id] and not fragTotals[id] then
+                local netQty = netBuyQtyMap[id]
+                if netQty and netQty > 0 then
+                    if useFrag then
+                        fragOrder[#fragOrder + 1] = id
+                        fragTotals[id] = { name = itemName, qty = netQty }
+                    else
+                        buyOrder[#buyOrder + 1] = id
+                        buyTotals[id] = { name = itemName, qty = netQty }
+                    end
+                end
+            end
         end
         if reqStr == "" then reqStr = "无" end
         local materialsLine = reqStr
@@ -1151,8 +1262,21 @@ function L.ShowExportFrame()
         bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s AH:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), c2s(seg.totalSellBackAH), c2s(segGold), fragCostStr, acq, materialsLine)
     end
 
+    local buyLineStr = "要买的: "
+    for _, id in ipairs(buyOrder) do
+        local t = buyTotals[id]
+        if t then buyLineStr = buyLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
+    end
+    if buyLineStr == "要买的: " then buyLineStr = "要买的: 无" end
+    local fragLineStr = "碎片兑换: "
+    for _, id in ipairs(fragOrder) do
+        local t = fragTotals[id]
+        if t then fragLineStr = fragLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
+    end
+    if fragLineStr == "碎片兑换: " then fragLineStr = "碎片兑换: 无" end
+
     local totalFragStr = exportTotalFragments > 0 and (tostring(math.floor(exportTotalFragments + 0.5)) .. "碎片") or "0碎片"
-    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 金钱: %s  碎片: %s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalGold), totalFragStr, ahTimeStr) .. bodyTxt
+    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 金钱: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
 
     f.editBox:SetText(txt)
     f.editBox:HighlightText()
