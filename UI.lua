@@ -310,6 +310,14 @@ function L.OpenOptions()
         end
     end)
     f.fragInput = fragInput
+    local fragValueBtn = f.fragValueBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    fragValueBtn:SetSize(120, 20)
+    fragValueBtn:SetPoint("LEFT", fragInput, "RIGHT", 10, 0)
+    fragValueBtn:SetText("查看当前碎片价值")
+    fragValueBtn:SetScript("OnClick", function()
+        if L.ShowFragmentValueTable then L.ShowFragmentValueTable() end
+    end)
+    f.fragValueBtn = fragValueBtn
 
     -- Sell-back method: vendor or AH (affects net cost calculation)
     local sellBackLabel = f.sellBackLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1384,6 +1392,140 @@ function L.ShowVendorDump()
     end
     f.editBox:SetText(str)
     f.editBox:HighlightText(0, #str)
+    f:Show()
+end
+
+-- Show AH-derived fragment value table: for each item in FragmentCosts with AH price, value per fragment = (AH*0.95)/frags, sorted high to low.
+function L.ShowFragmentValueTable()
+    local fc = ProfLevelHelper_FragmentCosts
+    local db = ProfLevelHelperDB
+    if not fc or not db or not db.AHPrices or not next(db.AHPrices) then
+        L.Print("请先扫描拍卖行，并确保 FragmentCosts.lua 中已配置物品。")
+        return
+    end
+    local list = {}
+    for itemID, fragPerUnit in pairs(fc) do
+        if type(itemID) == "number" and type(fragPerUnit) == "number" and fragPerUnit > 0 then
+            local ahPrice = db.AHPrices[itemID]
+            if ahPrice and ahPrice > 0 then
+                local valuePerFrag = math.floor(ahPrice * 0.95 / fragPerUnit + 0.5)
+                local name = GetItemInfo(itemID) or (db.IDToName and db.IDToName[itemID]) or ("ID:" .. tostring(itemID))
+                list[#list + 1] = { itemID = itemID, valuePerFrag = valuePerFrag, name = name, fragPerUnit = fragPerUnit }
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.valuePerFrag > b.valuePerFrag end)
+
+    local f = L.FragmentValueTableFrame
+    if not f then
+        f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        L.FragmentValueTableFrame = f
+        f:SetSize(420, 380)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 10) end
+        f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 32, insets = { left = 11, right = 12, top = 12, bottom = 11 } })
+        f:SetBackdropColor(0, 0, 0, 0.95)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("当前碎片价值 (AH价税后/片，从高到低)")
+        f.title = title
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 12, -36)
+        scroll:SetPoint("BOTTOMRIGHT", -28, 44)
+        f.scroll = scroll
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(scroll:GetWidth() - 20, 1)
+        scroll:SetScrollChild(content)
+        f.scrollContent = content
+        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        close:SetSize(80, 22)
+        close:SetPoint("BOTTOMRIGHT", -12, 12)
+        close:SetText("关闭")
+        close:SetScript("OnClick", function() f:Hide() end)
+        local copyBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        copyBtn:SetSize(100, 22)
+        copyBtn:SetPoint("BOTTOMLEFT", 12, 12)
+        copyBtn:SetText("复制到剪贴板")
+        copyBtn:SetScript("OnClick", function()
+            local lst = f.currentList
+            if not lst or #lst == 0 then return end
+            local lines = { "【ProfLevelHelper】当前碎片价值 (AH价税后/片，从高到低) — " .. #lst .. " 种", "" }
+            for _, row in ipairs(lst) do
+                lines[#lines + 1] = string.format("%s  |  %d铜/片", row.name, row.valuePerFrag)
+            end
+            local txt = table.concat(lines, "\n")
+            local cf = L.FragmentValueCopyFrame
+            if not cf then
+                cf = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+                L.FragmentValueCopyFrame = cf
+                cf:SetSize(450, 400)
+                cf:SetPoint("CENTER")
+                cf:SetFrameStrata("DIALOG")
+                cf:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 32, insets = { left = 11, right = 12, top = 12, bottom = 11 } })
+                cf:SetBackdropColor(0, 0, 0, 0.95)
+                cf:EnableMouse(true)
+                cf:SetMovable(true)
+                cf:RegisterForDrag("LeftButton")
+                cf:SetScript("OnDragStart", cf.StartMoving)
+                cf:SetScript("OnDragStop", cf.StopMovingOrSizing)
+                local title = cf:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                title:SetPoint("TOP", 0, -12)
+                title:SetText("按下 Ctrl+C 复制以下文本")
+                local eb = CreateFrame("EditBox", nil, cf)
+                eb:SetPoint("TOPLEFT", 12, -36)
+                eb:SetPoint("BOTTOMRIGHT", -12, 44)
+                eb:SetMultiLine(true)
+                eb:SetFontObject("ChatFontNormal")
+                eb:SetAutoFocus(true)
+                eb:SetScript("OnEscapePressed", function() cf:Hide() end)
+                cf.editBox = eb
+                local cClose = CreateFrame("Button", nil, cf, "UIPanelButtonTemplate")
+                cClose:SetSize(80, 22)
+                cClose:SetPoint("BOTTOM", 0, 12)
+                cClose:SetText("关闭")
+                cClose:SetScript("OnClick", function() cf:Hide() end)
+            end
+            cf.editBox:SetText(txt)
+            cf.editBox:HighlightText()
+            cf:Show()
+        end)
+        f.copyBtn = copyBtn
+    end
+    f.currentList = list
+    local content = f.scrollContent
+    content:SetHeight(1)
+    for k, row in pairs(content) do
+        if type(row) == "table" and row.Hide then row:Hide() end
+    end
+    local ROW_H = 18
+    local y = 0
+    for i, row in ipairs(list) do
+        local line = content["fv_row_" .. i]
+        if not line then
+            line = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            line:SetPoint("TOPLEFT", 8, -y)
+            line:SetJustifyH("LEFT")
+            content["fv_row_" .. i] = line
+        end
+        local copper = row.valuePerFrag
+        local str = string.format("%s  |  %d铜/片", row.name, copper)
+        line:SetText(str)
+        line:SetWidth(content:GetWidth() - 16)
+        line:Show()
+        y = y + ROW_H
+    end
+    content:SetHeight(math.max(1, y))
+    for i = #list + 1, 500 do
+        local line = content["fv_row_" .. i]
+        if line then line:Hide() end
+    end
+    f.title:SetText("当前碎片价值 (AH价税后/片，从高到低) — " .. #list .. " 种")
     f:Show()
 end
 
