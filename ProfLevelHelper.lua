@@ -40,6 +40,7 @@ local function InitDB()
     if db.SellBackMethod == nil then db.SellBackMethod = "vendor" end
     db.AHSellBackBlacklist = db.AHSellBackBlacklist or {}
     db.AHSellBackWhitelist = db.AHSellBackWhitelist or {}
+    if db.UseDisenchantRecovery == nil then db.UseDisenchantRecovery = false end
 
     if db.MinAHQuantity == nil then db.MinAHQuantity = 40 end
     if db.IncludeHolidayRecipes == nil then db.IncludeHolidayRecipes = false end

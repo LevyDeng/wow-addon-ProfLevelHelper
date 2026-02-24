@@ -340,8 +340,8 @@ function L.TestCostAtSkill(skill)
             local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
             if vp and vp > 0 then rec.sellPricePerItem = vp end
         end
-        if rec.createdItemID and db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
-            rec.ahPricePerItem = db.AHPrices[rec.createdItemID]
+        if rec.createdItemID then
+            rec.ahPricePerItem = L.GetSellBackValueWhenUsingAH(rec, db) or 0
         end
     end
     local filteredRecipes = {}
@@ -369,12 +369,13 @@ function L.TestCostAtSkill(skill)
                 local numMade = rec.numMade or 1
                 local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
                 local sellBackAH = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * expectedCrafts
-                local useAH = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
-                local sellBack = useAH and sellBackAH or sellBackVendor
+                local useAH = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
+                local bestSb = L.GetBestSellBackPerItem(rec, db)
+                local sellBack = (bestSb and bestSb > 0) and (bestSb * numMade * expectedCrafts) or (useAH and sellBackAH or sellBackVendor)
                 local matGross = rec.matCost * expectedCrafts
                 local stepCost = matGross - sellBack
                 local matPerCraft = rec.matCost
-                local sellPerCraft = (useAH and (rec.ahPricePerItem or 0) * AH_TAX_FACTOR or (rec.sellPricePerItem or 0)) * numMade
+                local sellPerCraft = (bestSb and bestSb > 0) and (bestSb * numMade) or ((useAH and (rec.ahPricePerItem or 0) * AH_TAX_FACTOR or (rec.sellPricePerItem or 0)) * numMade)
                 L.Print(string.format("  %s | 单次: 材料%d铜 回血%d铜 净%d铜 | 升1级: 期望%.2f次 净花费%d铜", rec.name, matPerCraft, sellPerCraft, matPerCraft - sellPerCraft, expectedCrafts, stepCost))
             end
         end
@@ -398,6 +399,132 @@ function L.GetAHQuantity(itemId)
     local db = ProfLevelHelperDB
     if not db or not db.AHQty then return 0 end
     return db.AHQty[itemId] or 0
+end
+
+-- Warn once per session for disenchant-related issues.
+local DEWarned = {}
+local function WarnOnce(key, msg)
+    if not DEWarned[key] then
+        DEWarned[key] = true
+        L.Print(msg)
+    end
+end
+
+-- Get disenchant value (copper, after 5% AH tax) and breakdown using Auctionator.Enchant.GetDisenchantBreakdown + our AHPrices.
+-- Returns: value (number or nil), breakdown (array of { name, expectedQty, itemID }), err (string or nil: "no_auctionator", "no_api", "no_item", "no_breakdown").
+function L.GetDisenchantValueAndBreakdown(itemID)
+    local db = ProfLevelHelperDB
+    if not db or not itemID then return nil, nil, "no_item" end
+    if not Auctionator or not Auctionator.Enchant then
+        WarnOnce("no_auctionator", "分解回血需要 Auctionator 插件，请先启用。")
+        return nil, nil, "no_auctionator"
+    end
+    if type(Auctionator.Enchant.GetDisenchantBreakdown) ~= "function" then
+        WarnOnce("no_api", "无法获取分解明细（Auctionator 接口不可用），请更新 Auctionator。")
+        return nil, nil, "no_api"
+    end
+    local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+    if not getInfo then return nil, nil, "no_item" end
+    local itemInfo = { getInfo(itemID) }
+    if not itemInfo or not itemInfo[1] or not itemInfo[2] then
+        return nil, nil, "no_item"
+    end
+    local itemLink = itemInfo[2]
+    local results = Auctionator.Enchant.GetDisenchantBreakdown(itemLink, itemInfo)
+    if not results or type(results) ~= "table" then
+        WarnOnce("no_api", "无法获取分解明细（Auctionator 接口不可用），请更新 Auctionator。")
+        return nil, nil, "no_api"
+    end
+    if #results == 0 then return nil, {}, nil end
+    local nameToID = {}
+    if Auctionator.Constants and Auctionator.Constants.DisenchantingItemName and type(Auctionator.Constants.DisenchantingItemName) == "table" then
+        for id, nm in pairs(Auctionator.Constants.DisenchantingItemName) do
+            if type(nm) == "string" and nm ~= "" then nameToID[nm] = id end
+        end
+    end
+    if db.NameToID then
+        for nm, id in pairs(db.NameToID) do
+            if type(nm) == "string" and nm ~= "" then nameToID[nm] = id end
+        end
+    end
+    -- Aggregate by material: each outcome is (percent, qty, material). Expected qty = sum(percent/100 * qty). Price = sum(expectedQty * our AHPrices[itemID]) * 0.95.
+    local totalValue = 0
+    local byMaterial = {}   -- name -> { expectedQty = number, itemID = number }
+    for _, line in ipairs(results) do
+        local raw = (line and tostring(line)):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        local pct, qty, matName = raw:match("(%d+%.?%d*)%s*%%%s*(%d+)%s+(.+)")
+        if pct and qty and matName then
+            matName = strtrim and strtrim(matName) or matName:gsub("^%s+", ""):gsub("%s+$", "")
+            local percent = tonumber(pct) or 0
+            local q = tonumber(qty) or 0
+            local expectedQty = (percent / 100) * q
+            local mid = nameToID[matName] or (db.NameToID and db.NameToID[matName])
+            local price = (mid and db.AHPrices and db.AHPrices[mid]) and db.AHPrices[mid] or 0
+            totalValue = totalValue + expectedQty * price
+            if not byMaterial[matName] then
+                byMaterial[matName] = { expectedQty = 0, itemID = mid }
+            end
+            byMaterial[matName].expectedQty = byMaterial[matName].expectedQty + expectedQty
+        end
+    end
+    local breakdown = {}
+    for name, t in pairs(byMaterial) do
+        if t.expectedQty and t.expectedQty > 0 then
+            breakdown[#breakdown + 1] = { name = name, expectedQty = t.expectedQty, itemID = t.itemID }
+        end
+    end
+    -- No parseable breakdown => treat as not disenchantable (use normal sellback).
+    if #breakdown == 0 then return nil, {}, nil end
+    if totalValue <= 0 then return nil, breakdown, nil end
+    return math.floor(totalValue * 0.95), breakdown, nil
+end
+
+-- Per-item price used for AH sellback (recovery). When UseDisenchantRecovery is on, uses our disenchant calc (GetDisenchantBreakdown + AHPrices); else AHPrices.
+function L.GetSellBackAHPricePerItem(itemID)
+    local db = ProfLevelHelperDB
+    if not db or not itemID then return nil end
+    if db.UseDisenchantRecovery then
+        local value, _, err = L.GetDisenchantValueAndBreakdown(itemID)
+        if err then return nil end
+        if type(value) == "number" and value > 0 then return value end
+    end
+    if db.AHPrices and db.AHPrices[itemID] and db.AHPrices[itemID] > 0 then return db.AHPrices[itemID] end
+    return nil
+end
+
+-- True if item can be disenchanted and we get a valid breakdown (so we have expected materials for value calc).
+function L.IsDisenchantable(itemID)
+    if not itemID then return false end
+    local value, breakdown = L.GetDisenchantValueAndBreakdown(itemID)
+    return type(value) == "number" and value > 0 and breakdown and #breakdown > 0
+end
+
+-- Per-item value when using AH-path recovery. Whitelist (vendor mode) = direct AH sell item; else disenchant (if option) or AH.
+function L.GetSellBackValueWhenUsingAH(rec, db)
+    if not rec or not rec.createdItemID or not db then return nil end
+    if db.SellBackMethod == "vendor" and db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID] then
+        if db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
+            return db.AHPrices[rec.createdItemID]
+        end
+        return nil
+    end
+    return L.GetSellBackAHPricePerItem(rec.createdItemID)
+end
+
+-- When not in list: vendor mode and not whitelisted => max(vendor, disenchant); AH mode and not blacklisted => max(disenchant, vendor). Returns nil when in list (use normal rule).
+function L.GetBestSellBackPerItem(rec, db)
+    if not rec or not rec.createdItemID or not db then return nil end
+    if db.SellBackMethod == "vendor" and db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID] then
+        return nil
+    end
+    if db.SellBackMethod == "ah" and db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID] then
+        return nil
+    end
+    local vendor = rec.sellPricePerItem or 0
+    local deVal = L.GetDisenchantValueAndBreakdown(rec.createdItemID)
+    local disenchant = (type(deVal) == "number" and deVal > 0) and deVal or 0
+    local best = math.max(vendor, disenchant)
+    return best > 0 and best or nil
 end
 
 -- Resolve item name or id to price. Returns copper.
@@ -716,9 +843,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     local _, _, _, _, _, _, _, _, _, _, vp = GetItemInfo(rec.createdItemID)
                     if vp and vp > 0 then rec.sellPricePerItem = vp end
                 end
-                if db.AHPrices and db.AHPrices[rec.createdItemID] and db.AHPrices[rec.createdItemID] > 0 then
-                    rec.ahPricePerItem = db.AHPrices[rec.createdItemID]
-                end
+                rec.ahPricePerItem = L.GetSellBackValueWhenUsingAH(rec, db) or 0
             end
             local rCost, rSource = ProfLevelHelper.GetRecipeAcquisitionCost(rec)
             rCost = rCost or 0
@@ -794,11 +919,12 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             if not yellow or not gray then
                 yellow, gray = L.GetRecipeThresholds(rec.name, profName, learnSkill)
             end
-            local useAH      = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
+            local useAH      = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
             local numMade    = rec.numMade or 1
             local acqCost    = (not rec.isKnown) and (rec.acqCost or 0) or 0
             local validStart = math.max(learnSkill, targetStart)
             local validEnd   = math.min(gray - 1, targetEnd - 1)
+            local bestSb     = L.GetBestSellBackPerItem(rec, db)
 
             local pStep, pCrafts, pMat, pSellV, pSellA = {}, {}, {}, {}, {}
             local cs, cc, cm, cv, ca = 0, 0, 0, 0, 0
@@ -841,7 +967,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                         local mg  = matCostAtL * ec
                         local svV = (rec.sellPricePerItem or 0) * numMade * ec
                         local svA = (rec.ahPricePerItem  or 0) * AH_TAX_FACTOR * numMade * ec
-                        local sb  = useAH and svA or svV
+                        local sb  = (bestSb and bestSb > 0) and (bestSb * numMade * ec) or (useAH and svA or svV)
                         cs = cs + (mg - sb); cc = cc + ec; cm = cm + mg; cv = cv + svV; ca = ca + svA
                         cumEC = cumEC + ec
                     end
@@ -906,7 +1032,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 recCostOnce = seg.recCostActual or 0
                 seenRecipes[rec.name] = true
             end
-            local useAH    = ((db.SellBackMethod == "ah") and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or ((db.SellBackMethod == "vendor") and (db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]))
+            local useAH    = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
             local sellBack = useAH and totalSA or totalSV
             table.insert(consolidatedRoute, 1, {
                 startSkill          = t,
