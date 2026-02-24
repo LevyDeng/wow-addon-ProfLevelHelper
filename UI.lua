@@ -557,6 +557,7 @@ function L.ShowAHSellBackBlacklistDetail()
     local y = 0
     for _, itemID in ipairs(list) do
         local name = GetItemInfo(itemID) or ("Item " .. tostring(itemID))
+        local displayText = name .. " (id:" .. tostring(itemID) .. ")"
         local row = content["row_" .. itemID]
         if not row then
             row = CreateFrame("Frame", nil, content)
@@ -573,7 +574,7 @@ function L.ShowAHSellBackBlacklistDetail()
         end
         row:SetPoint("TOPLEFT", 0, -y)
         row:SetPoint("TOPRIGHT", 0, -y)
-        row.label:SetText(name)
+        row.label:SetText(displayText)
         row.btn:SetScript("OnClick", function()
             if ProfLevelHelperDB.AHSellBackBlacklist then ProfLevelHelperDB.AHSellBackBlacklist[itemID] = nil end
             local nBl = 0
@@ -709,6 +710,7 @@ function L.ShowAHSellBackWhitelistDetail()
     local y = 0
     for _, itemID in ipairs(list) do
         local name = GetItemInfo(itemID) or ("Item " .. tostring(itemID))
+        local displayText = name .. " (id:" .. tostring(itemID) .. ")"
         local row = content["row_" .. itemID]
         if not row then
             row = CreateFrame("Frame", nil, content)
@@ -725,7 +727,7 @@ function L.ShowAHSellBackWhitelistDetail()
         end
         row:SetPoint("TOPLEFT", 0, -y)
         row:SetPoint("TOPRIGHT", 0, -y)
-        row.label:SetText(name)
+        row.label:SetText(displayText)
         row.btn:SetScript("OnClick", function()
             if ProfLevelHelperDB.AHSellBackWhitelist then ProfLevelHelperDB.AHSellBackWhitelist[itemID] = nil end
             local nWl = 0
@@ -1074,10 +1076,14 @@ function L.ShowResultList()
         local materialAdded = {}
         for _, seg in ipairs(route) do
             if not seg.recipe.isKnown then
-                local rName = (seg.recipe.recipeName or seg.recipe.name) or "?"
-                if rName ~= "?" and not addedRecipes[rName] then
-                    addedRecipes[rName] = true
-                    purchaseList[#purchaseList + 1] = { type = "recipe", name = rName }
+                local src = seg.recSource or seg.recipe.acqSource or ""
+                local fromAHOrVendor = (src == "拍卖行购买" or src == "NPC 购买")
+                if fromAHOrVendor then
+                    local rName = (seg.recipe.recipeName or seg.recipe.name) or "?"
+                    if rName ~= "?" and not addedRecipes[rName] then
+                        addedRecipes[rName] = true
+                        purchaseList[#purchaseList + 1] = { type = "recipe", name = rName }
+                    end
                 end
             end
             for _, r in ipairs(seg.recipe.reagents or {}) do
@@ -1286,10 +1292,13 @@ function L.ShowExportFrame()
     local materialAdded = {}
     for _, seg in ipairs(data.route) do
         if not seg.recipe.isKnown then
-            local rName = (seg.recipe.recipeName or seg.recipe.name) or "?"
-            if rName ~= "?" and not addedRecipes[rName] then
-                addedRecipes[rName] = true
-                purchaseList[#purchaseList + 1] = { type = "recipe", name = rName }
+            local src = seg.recSource or seg.recipe.acqSource or ""
+            if src == "拍卖行购买" or src == "NPC 购买" then
+                local rName = (seg.recipe.recipeName or seg.recipe.name) or "?"
+                if rName ~= "?" and not addedRecipes[rName] then
+                    addedRecipes[rName] = true
+                    purchaseList[#purchaseList + 1] = { type = "recipe", name = rName }
+                end
             end
         end
         for _, r in ipairs(seg.recipe.reagents or {}) do
