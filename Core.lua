@@ -370,7 +370,7 @@ function L.TestCostAtSkill(skill)
                 local sellBackVendor = (rec.sellPricePerItem or 0) * numMade * expectedCrafts
                 local sellBackAH = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * expectedCrafts
                 local useAH = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
-                local bestSb = L.GetBestSellBackPerItem(rec, db)
+                local bestSb = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
                 local sellBack = (bestSb and bestSb > 0) and (bestSb * numMade * expectedCrafts) or (useAH and sellBackAH or sellBackVendor)
                 local matGross = rec.matCost * expectedCrafts
                 local stepCost = matGross - sellBack
@@ -924,7 +924,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             local acqCost    = (not rec.isKnown) and (rec.acqCost or 0) or 0
             local validStart = math.max(learnSkill, targetStart)
             local validEnd   = math.min(gray - 1, targetEnd - 1)
-            local bestSb     = L.GetBestSellBackPerItem(rec, db)
+            local bestSb     = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
 
             local pStep, pCrafts, pMat, pSellV, pSellA = {}, {}, {}, {}, {}
             local cs, cc, cm, cv, ca = 0, 0, 0, 0, 0
@@ -1033,7 +1033,8 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 seenRecipes[rec.name] = true
             end
             local useAH    = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
-            local sellBack = useAH and totalSA or totalSV
+            local bestSb   = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
+            local sellBack = (bestSb and bestSb > 0) and (bestSb * (rec.numMade or 1) * totalCrafts) or (useAH and totalSA or totalSV)
             table.insert(consolidatedRoute, 1, {
                 startSkill          = t,
                 endSkill            = e,

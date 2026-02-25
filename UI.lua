@@ -927,7 +927,8 @@ function L.ShowResultList()
             end
             local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
             local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
-            local sellback = useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+            local bestSb = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
+            local sellback = (bestSb and bestSb > 0) and (bestSb * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
             totalGold = totalGold + (seg.totalRecCost or 0) + goldMat - sellback
             totalFragments = totalFragments + fragmentCount
         end
@@ -1024,7 +1025,8 @@ function L.ShowResultList()
             local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
             local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
             local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
-            local sellback = useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+            local bestSb = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
+            local sellback = (bestSb and bestSb > 0) and (bestSb * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
             local segGold = (seg.totalRecCost or 0) + goldMat - sellback
             totalGold = totalGold + segGold
             totalFragments = totalFragments + fragmentCount
@@ -1045,6 +1047,8 @@ function L.ShowResultList()
             end
             local deLine = ""
             if useDisenchant and breakdown and #breakdown > 0 then
+                local vendorBetter = (seg.totalSellBackVendor or 0) > (seg.totalSellBackAH or 0)
+                local deLabel = vendorBetter and "分解产物(卖店比分解更划算, 不建议分解)(期望/件): " or "分解产物(期望/件): "
                 local parts = {}
                 for _, b in ipairs(breakdown) do
                     local q = (b.expectedQty and tonumber(b.expectedQty)) or 0
@@ -1052,7 +1056,7 @@ function L.ShowResultList()
                     local price = (db and db.AHPrices and b.itemID and db.AHPrices[b.itemID]) and db.AHPrices[b.itemID] or 0
                     parts[#parts + 1] = string.format("%s(%s/个) x%.2f", displayName, CopperToGold(price), q)
                 end
-                deLine = "\n  分解产物(期望/件): " .. table.concat(parts, ", ")
+                deLine = "\n  " .. deLabel .. table.concat(parts, ", ")
             end
             line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作(金钱): %s | 制作(碎片): %s | 回血(卖NPC: %s | %s: %s) | 净花费 金钱: %s 碎片: %s\n  材料: %s%s"):format(
                 seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts,
@@ -1321,7 +1325,8 @@ function L.ShowExportFrame()
         local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
         local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
         local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
-        local sellback = useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0)
+        local bestSbExport = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
+        local sellback = (bestSbExport and bestSbExport > 0) and (bestSbExport * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
         local segGold = (seg.totalRecCost or 0) + goldMat - sellback
         local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. "碎片") or "0碎片"
         local acq = seg.recSource and ("来源:"..seg.recSource) or ""
@@ -1333,6 +1338,8 @@ function L.ShowExportFrame()
         if useDisenchant and L.GetDisenchantValueAndBreakdown and seg.recipe.createdItemID then
             local _, breakdownExport = L.GetDisenchantValueAndBreakdown(seg.recipe.createdItemID)
             if breakdownExport and #breakdownExport > 0 then
+                local vendorBetterExport = (seg.totalSellBackVendor or 0) > (seg.totalSellBackAH or 0)
+                local deLabelExport = vendorBetterExport and " 分解产物(卖店比分解更划算, 不建议分解)(期望/件):" or " 分解产物(期望/件):"
                 local parts = {}
                 for _, b in ipairs(breakdownExport) do
                     local q = (b.expectedQty and tonumber(b.expectedQty)) or 0
@@ -1340,7 +1347,7 @@ function L.ShowExportFrame()
                     local price = (db and db.AHPrices and b.itemID and db.AHPrices[b.itemID]) and db.AHPrices[b.itemID] or 0
                     parts[#parts + 1] = string.format("%s(%s/个) x%.2f", displayName, c2s(price), q)
                 end
-                deLineExport = " 分解产物(期望/件):" .. table.concat(parts, ", ")
+                deLineExport = deLabelExport .. " " .. table.concat(parts, ", ")
             end
         end
         bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s %s:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s%s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), sellbackLabelExport, c2s(seg.totalSellBackAH), c2s(segGold), fragCostStr, acq, materialsLine, deLineExport)
