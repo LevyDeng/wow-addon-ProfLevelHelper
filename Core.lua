@@ -479,14 +479,13 @@ function L.GetDisenchantValueAndBreakdown(itemID)
     return math.floor(totalValue * 0.95), breakdown, nil
 end
 
--- Per-item price used for AH sellback (recovery). When UseDisenchantRecovery is on, uses our disenchant calc (GetDisenchantBreakdown + AHPrices); else AHPrices.
+-- Per-item price used for AH sellback (recovery). When UseDisenchantRecovery is on, uses our disenchant calc (GetDisenchantBreakdown + AHPrices); else AHPrices. If disenchant fails (e.g. Auctionator not loaded), falls back to AHPrices.
 function L.GetSellBackAHPricePerItem(itemID)
     local db = ProfLevelHelperDB
     if not db or not itemID then return nil end
     if db.UseDisenchantRecovery then
         local value, _, err = L.GetDisenchantValueAndBreakdown(itemID)
-        if err then return nil end
-        if type(value) == "number" and value > 0 then return value end
+        if not err and type(value) == "number" and value > 0 then return value end
     end
     if db.AHPrices and db.AHPrices[itemID] and db.AHPrices[itemID] > 0 then return db.AHPrices[itemID] end
     return nil

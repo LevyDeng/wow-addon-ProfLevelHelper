@@ -908,6 +908,9 @@ function L.ShowResultList()
         content.segmentBtns = {}
 
         local db = ProfLevelHelperDB
+        if db and db.UseDisenchantRecovery and (not Auctionator or not Auctionator.Enchant) then
+            L.Print("分解回血已勾选但未检测到 Auctionator 插件，分解相关回血不可用，请启用 Auctionator 后重载界面。")
+        end
         local fragVal = (db and db.FragmentValueInCopper) and db.FragmentValueInCopper or 0
         local totalGold = 0
         local totalFragments = 0
