@@ -28,6 +28,17 @@ function L.ParseItemIdFromAddInput(str, db)
     return nil
 end
 
+-- Parse add-input to spell ID: number or spell link (|Hspell:12345|).
+function L.ParseSpellIdFromAddInput(str)
+    if not str or str == "" then return nil end
+    str = str:match("^%s*(.-)%s*$") or str
+    local id = tonumber(str)
+    if id and id > 0 then return id end
+    id = str and str:match("spell:(%d+)")
+    if id then return tonumber(id) end
+    return nil
+end
+
 -- Scan progress frame (shown during AH scan)
 function L.ShowScanProgress()
     local f = L.ScanProgressFrame
@@ -433,6 +444,46 @@ function L.OpenOptions()
     createCheckbox("IncludeSourceVendor", "包含NPC出售图纸")
     createCheckbox("IncludeSourceQuest", "包含任务奖励图纸")
     createCheckbox("IncludeSourceUnknown", "包含未知/打怪掉落图纸")
+    createCheckbox("ExcludeCooldownRecipes", "排除有冷却的配方")
+
+    -- Cooldown recipe blacklist/whitelist
+    local cdBlLabel = f.cdBlLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    cdBlLabel:SetPoint("TOPLEFT", lastCbAnchor, "BOTTOMLEFT", 0, -8)
+    cdBlLabel:SetWidth(332)
+    cdBlLabel:SetWordWrap(true)
+    cdBlLabel:SetNonSpaceWrap(false)
+    cdBlLabel:SetText("CD配方黑名单(按法术ID排除，不受上方勾选影响):")
+    f.cdBlLabel = cdBlLabel
+    local cdBlCountText = f.cdBlCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    cdBlCountText:SetPoint("TOPLEFT", cdBlLabel, "BOTTOMLEFT", 0, -4)
+    f.cdBlCountText = cdBlCountText
+    local cdBlDetailBtn = f.cdBlDetailBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    cdBlDetailBtn:SetSize(90, 20)
+    cdBlDetailBtn:SetPoint("LEFT", cdBlCountText, "RIGHT", 12, 0)
+    cdBlDetailBtn:SetText("查看黑名单")
+    cdBlDetailBtn:SetScript("OnClick", function()
+        if L.ShowCooldownBlacklistDetail then L.ShowCooldownBlacklistDetail() end
+    end)
+    f.cdBlDetailBtn = cdBlDetailBtn
+
+    local cdWlLabel = f.cdWlLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    cdWlLabel:SetPoint("TOPLEFT", cdBlCountText, "BOTTOMLEFT", 0, -14)
+    cdWlLabel:SetWidth(332)
+    cdWlLabel:SetWordWrap(true)
+    cdWlLabel:SetNonSpaceWrap(false)
+    cdWlLabel:SetText("CD配方白名单(按法术ID，勾选排除CD时仍允许):")
+    f.cdWlLabel = cdWlLabel
+    local cdWlCountText = f.cdWlCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    cdWlCountText:SetPoint("TOPLEFT", cdWlLabel, "BOTTOMLEFT", 0, -4)
+    f.cdWlCountText = cdWlCountText
+    local cdWlDetailBtn = f.cdWlDetailBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    cdWlDetailBtn:SetSize(90, 20)
+    cdWlDetailBtn:SetPoint("LEFT", cdWlCountText, "RIGHT", 12, 0)
+    cdWlDetailBtn:SetText("查看白名单")
+    cdWlDetailBtn:SetScript("OnClick", function()
+        if L.ShowCooldownWhitelistDetail then L.ShowCooldownWhitelistDetail() end
+    end)
+    f.cdWlDetailBtn = cdWlDetailBtn
 
     local feedback = f.feedbackText or f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     feedback:SetPoint("BOTTOM", 0, 38)
@@ -463,6 +514,22 @@ function L.OpenOptions()
     end
     if f.blCountText then f.blCountText:SetText("已屏蔽 " .. nBl .. " 种") end
     if f.wlCountText then f.wlCountText:SetText("已添加 " .. nWl .. " 种") end
+    local nCdBl = 0
+    if ProfLevelHelperDB.CooldownRecipesBlacklist then
+        for _ in pairs(ProfLevelHelperDB.CooldownRecipesBlacklist) do nCdBl = nCdBl + 1 end
+    end
+    local nCdWl = 0
+    if ProfLevelHelperDB.CooldownRecipesWhitelist then
+        for _ in pairs(ProfLevelHelperDB.CooldownRecipesWhitelist) do nCdWl = nCdWl + 1 end
+    end
+    if f.cdBlCountText then f.cdBlCountText:SetText("已屏蔽 " .. nCdBl .. " 种") end
+    if f.cdWlCountText then f.cdWlCountText:SetText("已添加 " .. nCdWl .. " 种") end
+    local nKnownCd = 0
+    if ProfLevelHelperDB.KnownCooldownItemIDs then
+        for _ in pairs(ProfLevelHelperDB.KnownCooldownItemIDs) do nKnownCd = nKnownCd + 1 end
+    end
+    if f.knownCdCountText then f.knownCdCountText:SetText("已添加 " .. nKnownCd .. " 种") end
+    if f.cb_ExcludeCooldownRecipes then f.cb_ExcludeCooldownRecipes:SetChecked(ProfLevelHelperDB.ExcludeCooldownRecipes) end
     L.UpdateScanButtonState()
     f:Show()
 end
@@ -764,6 +831,308 @@ function L.ShowAHSellBackWhitelistDetail()
             if opt and opt.wlCountText then opt.wlCountText:SetText("已添加 " .. nWl .. " 种") end
             if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
             L.ShowAHSellBackWhitelistDetail()
+        end)
+        row:Show()
+        y = y + ROW_H
+    end
+    content:SetHeight(math.max(1, y))
+    f.clearBtn:SetShown(#list > 0)
+    f:Show()
+end
+
+-- CD recipe blacklist detail: list by spell ID
+function L.ShowCooldownBlacklistDetail()
+    local bl = ProfLevelHelperDB.CooldownRecipesBlacklist or {}
+    local list = {}
+    for id in pairs(bl) do list[#list + 1] = id end
+    table.sort(list)
+
+    local f = L.CooldownBlacklistDetailFrame
+    if not f then
+        f = CreateFrame("Frame", "ProfLevelHelperCDBlacklistDetail", UIParent, "BackdropTemplate")
+        L.CooldownBlacklistDetailFrame = f
+        f:SetSize(340, 380)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
+        f:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -16)
+        title:SetText("CD配方黑名单")
+        f.title = title
+
+        local addRow = CreateFrame("Frame", nil, f)
+        addRow:SetSize(300, 24)
+        addRow:SetPoint("TOP", 0, -40)
+        f.addRow = addRow
+        local addEdit = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
+        addEdit:SetSize(180, 20)
+        addEdit:SetPoint("LEFT", 12, 0)
+        addEdit:SetAutoFocus(false)
+        addEdit:SetScript("OnEnterPressed", function() addEdit:ClearFocus() end)
+        addEdit:SetScript("OnEscapePressed", function() addEdit:ClearFocus() end)
+        f.addEdit = addEdit
+        local addBtn = CreateFrame("Button", nil, addRow, "UIPanelButtonTemplate")
+        addBtn:SetSize(50, 20)
+        addBtn:SetPoint("LEFT", addEdit, "RIGHT", 8, 0)
+        addBtn:SetText("添加")
+        addBtn:SetScript("OnClick", function()
+            local str = addEdit:GetText()
+            local id = L.ParseSpellIdFromAddInput and L.ParseSpellIdFromAddInput(str)
+            if id and id > 0 then
+                ProfLevelHelperDB.CooldownRecipesBlacklist = ProfLevelHelperDB.CooldownRecipesBlacklist or {}
+                ProfLevelHelperDB.CooldownRecipesBlacklist[id] = true
+                addEdit:SetText("")
+                local opt = L.OptionsFrame
+                if opt and opt.cdBlCountText then
+                    local n = 0
+                    for _ in pairs(ProfLevelHelperDB.CooldownRecipesBlacklist) do n = n + 1 end
+                    opt.cdBlCountText:SetText("已屏蔽 " .. n .. " 种")
+                end
+                if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+                L.ShowCooldownBlacklistDetail()
+            else
+                local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
+                if trimmed and trimmed ~= "" then
+                    L.Print("请输入法术ID或法术链接（如 |cff71d5ff|Hspell:28028|h[虚空之球]|h|r）。")
+                end
+            end
+        end)
+        f.addBtn = addBtn
+        local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+        addHint:SetText("(法术ID/法术链接)")
+        f.addHint = addHint
+
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 12, -68)
+        scroll:SetPoint("BOTTOMRIGHT", -32, 52)
+        f.scroll = scroll
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(280, 1)
+        scroll:SetScrollChild(content)
+        f.scrollContent = content
+
+        local clearBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        clearBtn:SetSize(100, 22)
+        clearBtn:SetPoint("BOTTOM", -60, 16)
+        clearBtn:SetText("清空黑名单")
+        clearBtn:SetScript("OnClick", function()
+            ProfLevelHelperDB.CooldownRecipesBlacklist = {}
+            local opt = L.OptionsFrame
+            if opt and opt.cdBlCountText then opt.cdBlCountText:SetText("已屏蔽 0 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowCooldownBlacklistDetail()
+        end)
+        f.clearBtn = clearBtn
+
+        local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        closeBtn:SetSize(80, 22)
+        closeBtn:SetPoint("BOTTOM", 60, 16)
+        closeBtn:SetText("关闭")
+        closeBtn:SetScript("OnClick", function() f:Hide() end)
+        f.closeBtn = closeBtn
+    end
+
+    local content = f.scrollContent
+    content:SetHeight(1)
+    for k, row in pairs(content) do
+        if type(row) == "table" and row.Hide then row:Hide() end
+    end
+
+    local ROW_H = 22
+    local y = 0
+    for _, sid in ipairs(list) do
+        local name = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid))
+        local displayText = name .. " (id:" .. tostring(sid) .. ")"
+        local row = content["row_" .. sid]
+        if not row then
+            row = CreateFrame("Frame", nil, content)
+            row:SetHeight(ROW_H)
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.label:SetPoint("LEFT", 8, 0)
+            row.label:SetPoint("RIGHT", -70, 0)
+            row.label:SetWordWrap(false)
+            row.btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.btn:SetSize(50, 18)
+            row.btn:SetPoint("RIGHT", 0, 0)
+            row.btn:SetText("移除")
+            content["row_" .. sid] = row
+        end
+        row:SetPoint("TOPLEFT", 0, -y)
+        row:SetPoint("TOPRIGHT", 0, -y)
+        row.label:SetText(displayText)
+        row.btn:SetScript("OnClick", function()
+            if ProfLevelHelperDB.CooldownRecipesBlacklist then ProfLevelHelperDB.CooldownRecipesBlacklist[sid] = nil end
+            local n = 0
+            if ProfLevelHelperDB.CooldownRecipesBlacklist then for _ in pairs(ProfLevelHelperDB.CooldownRecipesBlacklist) do n = n + 1 end end
+            local opt = L.OptionsFrame
+            if opt and opt.cdBlCountText then opt.cdBlCountText:SetText("已屏蔽 " .. n .. " 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowCooldownBlacklistDetail()
+        end)
+        row:Show()
+        y = y + ROW_H
+    end
+    content:SetHeight(math.max(1, y))
+    f.clearBtn:SetShown(#list > 0)
+    f:Show()
+end
+
+-- CD recipe whitelist detail
+function L.ShowCooldownWhitelistDetail()
+    local wl = ProfLevelHelperDB.CooldownRecipesWhitelist or {}
+    local list = {}
+    for id in pairs(wl) do list[#list + 1] = id end
+    table.sort(list)
+
+    local f = L.CooldownWhitelistDetailFrame
+    if not f then
+        f = CreateFrame("Frame", "ProfLevelHelperCDWhitelistDetail", UIParent, "BackdropTemplate")
+        L.CooldownWhitelistDetailFrame = f
+        f:SetSize(340, 380)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
+        f:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -16)
+        title:SetText("CD配方白名单")
+        f.title = title
+
+        local addRow = CreateFrame("Frame", nil, f)
+        addRow:SetSize(300, 24)
+        addRow:SetPoint("TOP", 0, -40)
+        f.addRow = addRow
+        local addEdit = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
+        addEdit:SetSize(180, 20)
+        addEdit:SetPoint("LEFT", 12, 0)
+        addEdit:SetAutoFocus(false)
+        addEdit:SetScript("OnEnterPressed", function() addEdit:ClearFocus() end)
+        addEdit:SetScript("OnEscapePressed", function() addEdit:ClearFocus() end)
+        f.addEdit = addEdit
+        local addBtn = CreateFrame("Button", nil, addRow, "UIPanelButtonTemplate")
+        addBtn:SetSize(50, 20)
+        addBtn:SetPoint("LEFT", addEdit, "RIGHT", 8, 0)
+        addBtn:SetText("添加")
+        addBtn:SetScript("OnClick", function()
+            local str = addEdit:GetText()
+            local id = L.ParseSpellIdFromAddInput and L.ParseSpellIdFromAddInput(str)
+            if id and id > 0 then
+                ProfLevelHelperDB.CooldownRecipesWhitelist = ProfLevelHelperDB.CooldownRecipesWhitelist or {}
+                ProfLevelHelperDB.CooldownRecipesWhitelist[id] = true
+                addEdit:SetText("")
+                local opt = L.OptionsFrame
+                if opt and opt.cdWlCountText then
+                    local n = 0
+                    for _ in pairs(ProfLevelHelperDB.CooldownRecipesWhitelist) do n = n + 1 end
+                    opt.cdWlCountText:SetText("已添加 " .. n .. " 种")
+                end
+                if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+                L.ShowCooldownWhitelistDetail()
+            else
+                local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
+                if trimmed and trimmed ~= "" then
+                    L.Print("请输入法术ID或法术链接。")
+                end
+            end
+        end)
+        f.addBtn = addBtn
+        local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+        addHint:SetText("(法术ID/法术链接)")
+        f.addHint = addHint
+
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 12, -68)
+        scroll:SetPoint("BOTTOMRIGHT", -32, 52)
+        f.scroll = scroll
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(280, 1)
+        scroll:SetScrollChild(content)
+        f.scrollContent = content
+
+        local clearBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        clearBtn:SetSize(100, 22)
+        clearBtn:SetPoint("BOTTOM", -60, 16)
+        clearBtn:SetText("清空白名单")
+        clearBtn:SetScript("OnClick", function()
+            ProfLevelHelperDB.CooldownRecipesWhitelist = {}
+            local opt = L.OptionsFrame
+            if opt and opt.cdWlCountText then opt.cdWlCountText:SetText("已添加 0 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowCooldownWhitelistDetail()
+        end)
+        f.clearBtn = clearBtn
+
+        local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        closeBtn:SetSize(80, 22)
+        closeBtn:SetPoint("BOTTOM", 60, 16)
+        closeBtn:SetText("关闭")
+        closeBtn:SetScript("OnClick", function() f:Hide() end)
+        f.closeBtn = closeBtn
+    end
+
+    local content = f.scrollContent
+    content:SetHeight(1)
+    for k, row in pairs(content) do
+        if type(row) == "table" and row.Hide then row:Hide() end
+    end
+
+    local ROW_H = 22
+    local y = 0
+    for _, sid in ipairs(list) do
+        local name = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid))
+        local displayText = name .. " (id:" .. tostring(sid) .. ")"
+        local row = content["row_" .. sid]
+        if not row then
+            row = CreateFrame("Frame", nil, content)
+            row:SetHeight(ROW_H)
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.label:SetPoint("LEFT", 8, 0)
+            row.label:SetPoint("RIGHT", -70, 0)
+            row.label:SetWordWrap(false)
+            row.btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.btn:SetSize(50, 18)
+            row.btn:SetPoint("RIGHT", 0, 0)
+            row.btn:SetText("移除")
+            content["row_" .. sid] = row
+        end
+        row:SetPoint("TOPLEFT", 0, -y)
+        row:SetPoint("TOPRIGHT", 0, -y)
+        row.label:SetText(displayText)
+        row.btn:SetScript("OnClick", function()
+            if ProfLevelHelperDB.CooldownRecipesWhitelist then ProfLevelHelperDB.CooldownRecipesWhitelist[sid] = nil end
+            local n = 0
+            if ProfLevelHelperDB.CooldownRecipesWhitelist then for _ in pairs(ProfLevelHelperDB.CooldownRecipesWhitelist) do n = n + 1 end end
+            local opt = L.OptionsFrame
+            if opt and opt.cdWlCountText then opt.cdWlCountText:SetText("已添加 " .. n .. " 种") end
+            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            L.ShowCooldownWhitelistDetail()
         end)
         row:Show()
         y = y + ROW_H

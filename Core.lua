@@ -87,6 +87,9 @@ function L.GetRecipeList(includeHoliday)
                             end
                         end
 
+                        local db = ProfLevelHelperDB
+                        local cooldownSeconds = (db and db.KnownCooldownSpellIDs and sid and db.KnownCooldownSpellIDs[sid]) and db.KnownCooldownSpellIDs[sid]
+                            or (db and db.KnownCooldownItemIDs and createdItemID and db.KnownCooldownItemIDs[createdItemID]) and db.KnownCooldownItemIDs[createdItemID] or nil
                         list[#list + 1] = {
                             name = name,
                             recipeName = recipeName,
@@ -103,6 +106,7 @@ function L.GetRecipeList(includeHoliday)
                             index = sid,
                             createdItemID = createdItemID,
                             numMade = numMade,
+                            cooldownSeconds = cooldownSeconds,
                         }
                     end
                 end
@@ -148,6 +152,9 @@ function L.GetRecipeList(includeHoliday)
                         end
                     end
                 end
+                local db = ProfLevelHelperDB
+                -- Native path has no spell ID; only product-ID list (user "已知有冷却的配方") applies.
+                local cooldownSeconds = (db and db.KnownCooldownItemIDs and createdItemID and db.KnownCooldownItemIDs[createdItemID]) and db.KnownCooldownItemIDs[createdItemID] or nil
                 list[#list + 1] = {
                     name = name,
                     recipeName = recipeName,
@@ -159,6 +166,7 @@ function L.GetRecipeList(includeHoliday)
                     isKnown = true,
                     createdItemID = createdItemID,
                     numMade = numMade,
+                    cooldownSeconds = cooldownSeconds,
                 }
             end
         end
@@ -899,6 +907,17 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                         if not hasVendorOrFrag and (db.AHQty[id] or 0) < 1 then
                             allowed = false; break
                         end
+                    end
+                end
+            end
+            -- Cooldown recipe filter: blacklist/whitelist by spell ID (ala path); native path has no rec.sid so list does not apply.
+            if allowed and rec.cooldownSeconds and rec.cooldownSeconds > 0 then
+                local sid = rec.sid
+                if sid and db.CooldownRecipesBlacklist and db.CooldownRecipesBlacklist[sid] then
+                    allowed = false
+                elseif db.ExcludeCooldownRecipes then
+                    if not (sid and db.CooldownRecipesWhitelist and db.CooldownRecipesWhitelist[sid]) then
+                        allowed = false
                     end
                 end
             end

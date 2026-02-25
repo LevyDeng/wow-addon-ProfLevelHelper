@@ -9,6 +9,7 @@
 
 FragmentCosts.lua
 VendorPrices.lua
+CooldownRecipes.lua
 ProfLevelHelper.lua
 RecipeCost.lua
 Core.lua
