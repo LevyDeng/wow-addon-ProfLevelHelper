@@ -55,6 +55,21 @@ local function InitDB()
     if db.IncludeSourceVendor == nil then db.IncludeSourceVendor = false end
     if db.IncludeSourceQuest == nil then db.IncludeSourceQuest = false end
     if db.IncludeSourceUnknown == nil then db.IncludeSourceUnknown = false end
+
+    if db.ExcludeCooldownRecipes == nil then db.ExcludeCooldownRecipes = false end
+    db.CooldownRecipesBlacklist = db.CooldownRecipesBlacklist or {}
+    db.CooldownRecipesWhitelist = db.CooldownRecipesWhitelist or {}
+    -- CD by spell ID (from CooldownRecipes.lua); ala path uses this.
+    db.KnownCooldownSpellIDs = db.KnownCooldownSpellIDs or {}
+    if ProfLevelHelper_CooldownSpellIDs and type(ProfLevelHelper_CooldownSpellIDs) == "table" then
+        for k, v in pairs(ProfLevelHelper_CooldownSpellIDs) do
+            if type(k) == "number" and type(v) == "number" and v > 0 then
+                db.KnownCooldownSpellIDs[k] = v
+            end
+        end
+    end
+    -- CD by product item ID (user additions in "已知有冷却的配方"); native path fallback.
+    db.KnownCooldownItemIDs = db.KnownCooldownItemIDs or {}
 end
 
 function L.Print(msg)
@@ -116,6 +131,7 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
         L.Print("  debug   - 打印调试信息（故障排查用）")
         L.Print("  testlearn - 检测配方学习等级来源(ala vs 本插件)，需先打开专业窗口")
         L.Print("  testcost [等级] - 在指定等级打印各配方单次/升1级成本，默认175")
+        L.Print("  dumpala [法术ID] - 打印 ala 对该法术的 get_info_by_sid 完整返回（默认 28028=虚空之球）")
         L.Print("  recordvendor - 打开商人窗口后执行，记录当前商人售价")
         L.Print("  dumpvendor - 将已记录的商人售价导出为 Lua，复制保存为 VendorPrices.lua")
         L.Print("Feedback: ptrees@126.com")
