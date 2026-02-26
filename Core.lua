@@ -720,7 +720,7 @@ function L.BuildRouteProducedInfo(route, db)
         for _, r in ipairs(rec.reagents or {}) do
             local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
             if id then
-                consumed[id] = (consumed[id] or 0) + math.ceil(r.count * seg.totalCrafts)
+                consumed[id] = (consumed[id] or 0) + (r.count or 0) * seg.totalCrafts
             end
         end
     end
@@ -1052,22 +1052,43 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             end
             local useAH    = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
             local bestSb   = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
-            local sellBack = (bestSb and bestSb > 0) and (bestSb * (rec.numMade or 1) * totalCrafts) or (useAH and totalSA or totalSV)
+            -- Use integer craft count (ceil); all qty and costs derived from it.
+            local craftCount = math.ceil(totalCrafts)
+            local totalMat   = 0
+            local materialDetails = {}
+            for _, r in ipairs(rec.reagents or {}) do
+                local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+                if id then
+                    local qty = craftCount * (r.count or 0)
+                    local unitPrice = (effectiveCost[id] and effectiveCost[id] < EFF_COST_UNKNOWN) and effectiveCost[id] or 0
+                    totalMat = totalMat + qty * unitPrice
+                    materialDetails[#materialDetails + 1] = { itemID = id, qty = qty, unitPrice = unitPrice }
+                end
+            end
+            local numMade = rec.numMade or 1
+            local totalSV = (rec.sellPricePerItem or 0) * numMade * craftCount
+            local totalSA = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * craftCount
+            local sellBack = (bestSb and bestSb > 0) and (bestSb * numMade * craftCount) or (useAH and totalSA or totalSV)
             table.insert(consolidatedRoute, 1, {
                 startSkill          = t,
                 endSkill            = e,
                 recipe              = rec,
-                totalCrafts         = totalCrafts,
+                totalCrafts         = craftCount,
                 totalMatCost        = totalMat,
                 totalSellBackVendor = totalSV,
                 totalSellBackAH     = totalSA,
                 totalRecCost        = recCostOnce,
                 recSource           = rec.acqSource,
                 segmentTotalCost    = recCostOnce + totalMat - sellBack,
+                materialDetails     = materialDetails,
             })
             curr = t
         end
-        return consolidatedRoute, dp[targetEnd]
+        local totalCostFromRoute = 0
+        for _, seg in ipairs(consolidatedRoute) do
+            totalCostFromRoute = totalCostFromRoute + (seg.segmentTotalCost or 0)
+        end
+        return consolidatedRoute, totalCostFromRoute
     end -- end runDP
 
     -- Round 1: standard benchmark prices, no route-produced info yet.
@@ -1096,7 +1117,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             for _, seg in ipairs(route) do
                 for _, r in ipairs(seg.recipe.reagents or {}) do
                     local id = r.itemID or (r.name and db.NameToID and db.NameToID[r.name])
-                    if id then qtyMap[id] = (qtyMap[id] or 0) + math.ceil(r.count * seg.totalCrafts) end
+                    if id then
+                        qtyMap[id] = (qtyMap[id] or 0) + (r.count or 0) * seg.totalCrafts
+                    end
                 end
             end
             local baseOverride = {}

@@ -1293,7 +1293,7 @@ function L.ShowResultList()
                     local vendorCost = (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
                     local best = math.min(ahCost, vendorCost, fragCost)
                     if fragCost < 999999999 and best == fragCost then
-                        fragmentCount = fragmentCount + math.ceil(r.count * seg.totalCrafts) * (db.FragmentCosts[id] or 0)
+                        fragmentCount = fragmentCount + (r.count or 0) * seg.totalCrafts * (db.FragmentCosts[id] or 0)
                     end
                 end
             end
@@ -1325,7 +1325,7 @@ function L.ShowResultList()
             for _, r in ipairs(seg.recipe.reagents or {}) do
                 local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
                 if id then
-                    consumedQtyMap[id] = (consumedQtyMap[id] or 0) + math.ceil(r.count * seg.totalCrafts)
+                    consumedQtyMap[id] = (consumedQtyMap[id] or 0) + (r.count or 0) * seg.totalCrafts
                 end
             end
         end
@@ -1348,7 +1348,7 @@ function L.ShowResultList()
             local fragStr = ""
             local fragmentCount = 0
             local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
-            for _, r in ipairs(seg.recipe.reagents or {}) do
+            for i, r in ipairs(seg.recipe.reagents or {}) do
                 local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
                 local itemName = r.name
                 if not itemName and id then
@@ -1363,7 +1363,8 @@ function L.ShowResultList()
                 if not itemName then
                     itemName = "ID:" .. tostring(id or r.itemID)
                 end
-                local totQty = math.ceil(r.count * seg.totalCrafts)
+                local m = seg.materialDetails and seg.materialDetails[i]
+                local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
                 local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                 local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
                 local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
@@ -1371,9 +1372,12 @@ function L.ShowResultList()
                 local useFrag = (fragCost < 999999999 and best == fragCost)
                 if useFrag then
                     fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
-                    fragStr = fragStr .. itemName .. "*" .. totQty .. " "
+                    local fragUnit = (id and db and db.FragmentCosts and db.FragmentCosts[id] and fragVal) and (db.FragmentCosts[id] * fragVal) or nil
+                    local pricePart = fragUnit and ("(" .. CopperToGold(fragUnit) .. ")") or ""
+                    fragStr = fragStr .. itemName .. pricePart .. "*" .. totQty .. " "
                 else
-                    reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+                    local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. CopperToGold(m.unitPrice) .. ")") or ""
+                    reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
                 end
                 -- Summary: record net buy qty for to-buy / fragment (consumed - produced).
                 if id and not buyTotals[id] and not fragTotals[id] then
@@ -1638,7 +1642,9 @@ function L.ShowExportFrame()
     for _, seg in ipairs(data.route) do
         for _, r in ipairs(seg.recipe.reagents or {}) do
             local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
-            if id then consumedQtyMap[id] = (consumedQtyMap[id] or 0) + math.ceil(r.count * seg.totalCrafts) end
+            if id then
+                consumedQtyMap[id] = (consumedQtyMap[id] or 0) + (r.count or 0) * seg.totalCrafts
+            end
         end
     end
     local netBuyQtyMap = {}
@@ -1658,7 +1664,7 @@ function L.ShowExportFrame()
         local reqStr = ""
         local fragStr = ""
         local fragmentCount = 0
-        for _, r in ipairs(seg.recipe.reagents or {}) do
+        for i, r in ipairs(seg.recipe.reagents or {}) do
             local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
             local itemName = r.name
             if not itemName and id then
@@ -1666,7 +1672,8 @@ function L.ShowExportFrame()
                 if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
             end
             if not itemName then itemName = "ID:" .. tostring(id or r.itemID) end
-            local totQty = math.ceil(r.count * seg.totalCrafts)
+            local m = seg.materialDetails and seg.materialDetails[i]
+            local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
             local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
             local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
             local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
@@ -1674,9 +1681,12 @@ function L.ShowExportFrame()
             local useFrag = (fragCost < 999999999 and best == fragCost)
             if useFrag then
                 fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
-                fragStr = fragStr .. itemName .. "*" .. totQty .. " "
+                local fragUnit = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or nil
+                local pricePart = fragUnit and ("(" .. c2s(fragUnit) .. ")") or ""
+                fragStr = fragStr .. itemName .. pricePart .. "*" .. totQty .. " "
             else
-                reqStr = reqStr .. itemName .. "*" .. totQty .. " "
+                local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. c2s(m.unitPrice) .. ")") or ""
+                reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
             end
             if id and not buyTotals[id] and not fragTotals[id] then
                 local netQty = netBuyQtyMap[id]
