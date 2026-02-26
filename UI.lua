@@ -1432,9 +1432,7 @@ function L.ShowResultList()
 
             local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
             if not seg.recipe.isKnown then
-                rNameC = "|cffff2222[未学]|r" .. rNameC .. " |cff888888(获取: " .. (seg.recSource or "未知") .. ")|r"
-            else
-                rNameC = "|cff22ff22[已学]|r" .. rNameC
+                rNameC = rNameC .. " |cff888888(获取: " .. (seg.recSource or "未知") .. ")|r"
             end
 
             local sellbackLabel = useDisenchant and "分解" or "AH"
