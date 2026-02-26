@@ -1309,6 +1309,7 @@ function L.ShowResultList()
 
         totalGold = 0
         totalFragments = 0
+        local totalCostBeforeSellback = 0
         local y = 0
         -- Net buy quantities: total consumed minus total produced in route.
         -- Items whose net qty <= 0 are fully self-supplied and excluded from the summary.
@@ -1403,7 +1404,9 @@ function L.ShowResultList()
             local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
             local bestSb = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
             local sellback = (bestSb and bestSb > 0) and (bestSb * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
-            local segGold = (seg.totalRecCost or 0) + goldMat - sellback
+            local segTotalCost = (seg.totalRecCost or 0) + goldMat
+            local segGold = segTotalCost - sellback
+            totalCostBeforeSellback = totalCostBeforeSellback + segTotalCost
             totalGold = totalGold + segGold
             totalFragments = totalFragments + fragmentCount
             local goldStr = CopperToGold(segGold)
@@ -1557,7 +1560,7 @@ function L.ShowResultList()
         sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
         sumLine:SetJustifyH("LEFT")
         local totalFragStr = totalFragments > 0 and (tostring(math.floor(totalFragments + 0.5)) .. " 碎片") or "0 碎片"
-        sumLine:SetText("============\n总计 金钱: " .. CopperToGold(totalGold) .. "  碎片: " .. totalFragStr .. "\n============")
+        sumLine:SetText("============\n总计 总成本: " .. CopperToGold(totalCostBeforeSellback) .. "  净成本: " .. CopperToGold(totalGold) .. "  碎片: " .. totalFragStr .. "\n============")
         sumLine:Show()
 
         y = y + 80
@@ -1657,6 +1660,7 @@ function L.ShowExportFrame()
     local fragOrder = {}
 
     local exportTotalGold = 0
+    local exportTotalCost = 0
     local exportTotalFragments = 0
     local bodyTxt = ""
     for _, seg in ipairs(data.route) do
@@ -1709,9 +1713,11 @@ function L.ShowExportFrame()
         local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
         local bestSbExport = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
         local sellback = (bestSbExport and bestSbExport > 0) and (bestSbExport * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
-        local segGold = (seg.totalRecCost or 0) + goldMat - sellback
+        local segTotalCostExport = (seg.totalRecCost or 0) + goldMat
+        local segGold = segTotalCostExport - sellback
         local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. "碎片") or "0碎片"
         local acq = seg.recSource and ("来源:"..seg.recSource) or ""
+        exportTotalCost = exportTotalCost + segTotalCostExport
         exportTotalGold = exportTotalGold + segGold
         exportTotalFragments = exportTotalFragments + fragmentCount
 
@@ -1772,7 +1778,7 @@ function L.ShowExportFrame()
     if fragLineStr == "碎片兑换: " then fragLineStr = "碎片兑换: 无" end
 
     local totalFragStr = exportTotalFragments > 0 and (tostring(math.floor(exportTotalFragments + 0.5)) .. "碎片") or "0碎片"
-    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 金钱: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
+    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 总成本: %s  净成本: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalCost), c2s(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
 
     f.editBox:SetText(txt)
     f.editBox:HighlightText()
