@@ -59,16 +59,17 @@ local function InitDB()
     if db.ExcludeCooldownRecipes == nil then db.ExcludeCooldownRecipes = false end
     db.CooldownRecipesBlacklist = db.CooldownRecipesBlacklist or {}
     db.CooldownRecipesWhitelist = db.CooldownRecipesWhitelist or {}
-    -- CD by spell ID (from CooldownRecipes.lua); ala path uses this.
+    -- CD by spell ID: merge from CooldownRecipes.lua (ProfLevelHelper_CooldownRecipes) into saved DB.
     db.KnownCooldownSpellIDs = db.KnownCooldownSpellIDs or {}
-    if ProfLevelHelper_CooldownSpellIDs and type(ProfLevelHelper_CooldownSpellIDs) == "table" then
-        for k, v in pairs(ProfLevelHelper_CooldownSpellIDs) do
+    local staticCd = ProfLevelHelper_CooldownRecipes or ProfLevelHelper_CooldownSpellIDs
+    if staticCd and type(staticCd) == "table" then
+        for k, v in pairs(staticCd) do
             if type(k) == "number" and type(v) == "number" and v > 0 then
                 db.KnownCooldownSpellIDs[k] = v
             end
         end
     end
-    -- CD by product item ID (user additions in "已知有冷却的配方"); native path fallback.
+    -- Manual CD additions are by spell ID (same table as file). Item ID list no longer used.
     db.KnownCooldownItemIDs = db.KnownCooldownItemIDs or {}
 end
 

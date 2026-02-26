@@ -88,8 +88,7 @@ function L.GetRecipeList(includeHoliday)
                         end
 
                         local db = ProfLevelHelperDB
-                        local cooldownSeconds = (db and db.KnownCooldownSpellIDs and sid and db.KnownCooldownSpellIDs[sid]) and db.KnownCooldownSpellIDs[sid]
-                            or (db and db.KnownCooldownItemIDs and createdItemID and db.KnownCooldownItemIDs[createdItemID]) and db.KnownCooldownItemIDs[createdItemID] or nil
+                        local cooldownSeconds = (db and db.KnownCooldownSpellIDs and sid and db.KnownCooldownSpellIDs[sid]) and db.KnownCooldownSpellIDs[sid] or nil
                         list[#list + 1] = {
                             name = name,
                             recipeName = recipeName,
@@ -153,8 +152,8 @@ function L.GetRecipeList(includeHoliday)
                     end
                 end
                 local db = ProfLevelHelperDB
-                -- Native path has no spell ID; only product-ID list (user "已知有冷却的配方") applies.
-                local cooldownSeconds = (db and db.KnownCooldownItemIDs and createdItemID and db.KnownCooldownItemIDs[createdItemID]) and db.KnownCooldownItemIDs[createdItemID] or nil
+                -- Native path has no spell ID; user "已知有冷却的配方" is by spell ID only, so no CD from DB here.
+                local cooldownSeconds = nil
                 list[#list + 1] = {
                     name = name,
                     recipeName = recipeName,

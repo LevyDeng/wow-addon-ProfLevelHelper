@@ -28,14 +28,30 @@ function L.ParseItemIdFromAddInput(str, db)
     return nil
 end
 
--- Parse add-input to spell ID: number or spell link (|Hspell:12345|).
-function L.ParseSpellIdFromAddInput(str)
+-- Parse add-input to spell ID: number, spell link (|Hspell:12345|), or spell name (if spellIdList provided).
+-- spellIdList: optional table of spell IDs to match name against (e.g. keys of KnownCooldownSpellIDs).
+function L.ParseSpellIdFromAddInput(str, spellIdList)
     if not str or str == "" then return nil end
     str = str:match("^%s*(.-)%s*$") or str
     local id = tonumber(str)
     if id and id > 0 then return id end
     id = str and str:match("spell:(%d+)")
     if id then return tonumber(id) end
+    if spellIdList and GetSpellInfo and str and str ~= "" then
+        local lower = str:lower()
+        for sid in pairs(spellIdList) do
+            if type(sid) == "number" then
+                local name = GetSpellInfo(sid)
+                if name and name:lower() == lower then return sid end
+            end
+        end
+        for _, sid in ipairs(spellIdList) do
+            if type(sid) == "number" then
+                local name = GetSpellInfo(sid)
+                if name and name:lower() == lower then return sid end
+            end
+        end
+    end
     return nil
 end
 
@@ -525,10 +541,10 @@ function L.OpenOptions()
     if f.cdBlCountText then f.cdBlCountText:SetText("已屏蔽 " .. nCdBl .. " 种") end
     if f.cdWlCountText then f.cdWlCountText:SetText("已添加 " .. nCdWl .. " 种") end
     local nKnownCd = 0
-    if ProfLevelHelperDB.KnownCooldownItemIDs then
-        for _ in pairs(ProfLevelHelperDB.KnownCooldownItemIDs) do nKnownCd = nKnownCd + 1 end
+    if ProfLevelHelperDB.KnownCooldownSpellIDs then
+        for _ in pairs(ProfLevelHelperDB.KnownCooldownSpellIDs) do nKnownCd = nKnownCd + 1 end
     end
-    if f.knownCdCountText then f.knownCdCountText:SetText("已添加 " .. nKnownCd .. " 种") end
+    if f.knownCdCountText then f.knownCdCountText:SetText("已添加 " .. nKnownCd .. " 种(法术ID)") end
     if f.cb_ExcludeCooldownRecipes then f.cb_ExcludeCooldownRecipes:SetChecked(ProfLevelHelperDB.ExcludeCooldownRecipes) end
     L.UpdateScanButtonState()
     f:Show()
@@ -890,7 +906,8 @@ function L.ShowCooldownBlacklistDetail()
         addBtn:SetText("添加")
         addBtn:SetScript("OnClick", function()
             local str = addEdit:GetText()
-            local id = L.ParseSpellIdFromAddInput and L.ParseSpellIdFromAddInput(str)
+            local known = ProfLevelHelperDB.KnownCooldownSpellIDs or {}
+            local id = L.ParseSpellIdFromAddInput and (L.ParseSpellIdFromAddInput(str) or L.ParseSpellIdFromAddInput(str, known))
             if id and id > 0 then
                 ProfLevelHelperDB.CooldownRecipesBlacklist = ProfLevelHelperDB.CooldownRecipesBlacklist or {}
                 ProfLevelHelperDB.CooldownRecipesBlacklist[id] = true
@@ -906,14 +923,14 @@ function L.ShowCooldownBlacklistDetail()
             else
                 local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
                 if trimmed and trimmed ~= "" then
-                    L.Print("请输入法术ID或法术链接（如 |cff71d5ff|Hspell:28028|h[虚空之球]|h|r）。")
+                    L.Print("请输入法术ID、法术链接或法术名称。")
                 end
             end
         end)
         f.addBtn = addBtn
         local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
-        addHint:SetText("(法术ID/法术链接)")
+        addHint:SetText("(法术ID/链接/名称)")
         f.addHint = addHint
 
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
@@ -1041,7 +1058,8 @@ function L.ShowCooldownWhitelistDetail()
         addBtn:SetText("添加")
         addBtn:SetScript("OnClick", function()
             local str = addEdit:GetText()
-            local id = L.ParseSpellIdFromAddInput and L.ParseSpellIdFromAddInput(str)
+            local known = ProfLevelHelperDB.KnownCooldownSpellIDs or {}
+            local id = L.ParseSpellIdFromAddInput and (L.ParseSpellIdFromAddInput(str) or L.ParseSpellIdFromAddInput(str, known))
             if id and id > 0 then
                 ProfLevelHelperDB.CooldownRecipesWhitelist = ProfLevelHelperDB.CooldownRecipesWhitelist or {}
                 ProfLevelHelperDB.CooldownRecipesWhitelist[id] = true
@@ -1057,14 +1075,14 @@ function L.ShowCooldownWhitelistDetail()
             else
                 local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
                 if trimmed and trimmed ~= "" then
-                    L.Print("请输入法术ID或法术链接。")
+                    L.Print("请输入法术ID、法术链接或法术名称。")
                 end
             end
         end)
         f.addBtn = addBtn
         local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
-        addHint:SetText("(法术ID/法术链接)")
+        addHint:SetText("(法术ID/链接/名称)")
         f.addHint = addHint
 
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
