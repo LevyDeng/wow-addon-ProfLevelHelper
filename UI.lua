@@ -924,30 +924,26 @@ function L.ShowCooldownBlacklistDetail()
         title:SetText("配方黑名单")
         f.title = title
 
-        f.addType = "spell"
+        f.addType = "item"
+        local typeNames = { spell = "法术", item = "成品", name = "配方名" }
+        local typeOrder = { "item", "spell", "name" }
         local typeLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         typeLabel:SetPoint("TOPLEFT", 12, -40)
-        typeLabel:SetText("添加类型:")
-        local typeDropdown = CreateFrame("Frame", "ProfLevelHelperBLTypeDropdown", f, "UIDropDownMenuTemplate")
-        typeDropdown:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
-        UIDropDownMenu_SetWidth(typeDropdown, 100)
-        local typeNames = { spell = "法术", item = "成品", name = "配方名" }
-        UIDropDownMenu_Initialize(typeDropdown, function(self, level)
-            local info = UIDropDownMenu_CreateInfo()
-            info.func = function(_, val)
-                f.addType = val
-                UIDropDownMenu_SetSelectedValue(typeDropdown, val)
-                if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, typeNames[val]) end
-                UIDropDownMenu_Refresh(typeDropdown)
-            end
-            info.text, info.value, info.checked = "法术", "spell", (f.addType == "spell"); UIDropDownMenu_AddButton(info)
-            info.text, info.value, info.checked = "成品", "item", (f.addType == "item"); UIDropDownMenu_AddButton(info)
-            info.text, info.value, info.checked = "配方名", "name", (f.addType == "name"); UIDropDownMenu_AddButton(info)
-        end)
-        UIDropDownMenu_SetSelectedValue(typeDropdown, "spell")
-        if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, "法术") end
-        f.typeDropdown = typeDropdown
+        typeLabel:SetText("添加类型(名称或id):")
+        local typeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        typeBtn:SetSize(100, 22)
+        typeBtn:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
+        typeBtn:SetText("成品")
+        f.typeBtn = typeBtn
         f.typeNames = typeNames
+        typeBtn:SetScript("OnClick", function()
+            local nextIdx = 1
+            for i, k in ipairs(typeOrder) do
+                if k == (f.addType or "item") then nextIdx = (i % #typeOrder) + 1; break end
+            end
+            f.addType = typeOrder[nextIdx]
+            typeBtn:SetText(typeNames[f.addType])
+        end)
 
         local addRow = CreateFrame("Frame", nil, f)
         addRow:SetSize(320, 24)
@@ -966,7 +962,7 @@ function L.ShowCooldownBlacklistDetail()
         addBtn:SetText("添加")
         addBtn:SetScript("OnClick", function()
             local str = addEdit:GetText()
-            local typ = f.addType or "spell"
+            local typ = f.addType or "item"
             local bl = ProfLevelHelperDB.RecipeBlacklist
             if not bl.spell then bl.spell = {} end
             if not bl.item then bl.item = {} end
@@ -1023,11 +1019,8 @@ function L.ShowCooldownBlacklistDetail()
         f.closeBtn = closeBtn
     end
 
-    if f.typeDropdown and UIDropDownMenu_SetSelectedValue then
-        local cur = f.addType or "spell"
-        UIDropDownMenu_SetSelectedValue(f.typeDropdown, cur)
-        if UIDropDownMenu_SetSelectedName and f.typeNames then UIDropDownMenu_SetSelectedName(f.typeDropdown, f.typeNames[cur]) end
-        UIDropDownMenu_Refresh(f.typeDropdown)
+    if f.typeBtn and f.typeNames then
+        f.typeBtn:SetText(f.typeNames[f.addType or "item"] or "成品")
     end
 
     local content = f.scrollContent
@@ -1108,30 +1101,26 @@ function L.ShowCooldownWhitelistDetail()
         title:SetText("配方白名单")
         f.title = title
 
-        f.addType = "spell"
+        f.addType = "item"
+        local typeNames = { spell = "法术", item = "成品", name = "配方名" }
+        local typeOrder = { "item", "spell", "name" }
         local typeLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         typeLabel:SetPoint("TOPLEFT", 12, -40)
-        typeLabel:SetText("添加类型:")
-        local typeDropdown = CreateFrame("Frame", "ProfLevelHelperWLTypeDropdown", f, "UIDropDownMenuTemplate")
-        typeDropdown:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
-        UIDropDownMenu_SetWidth(typeDropdown, 100)
-        local typeNames = { spell = "法术", item = "成品", name = "配方名" }
-        UIDropDownMenu_Initialize(typeDropdown, function(self, level)
-            local info = UIDropDownMenu_CreateInfo()
-            info.func = function(_, val)
-                f.addType = val
-                UIDropDownMenu_SetSelectedValue(typeDropdown, val)
-                if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, typeNames[val]) end
-                UIDropDownMenu_Refresh(typeDropdown)
-            end
-            info.text, info.value, info.checked = "法术", "spell", (f.addType == "spell"); UIDropDownMenu_AddButton(info)
-            info.text, info.value, info.checked = "成品", "item", (f.addType == "item"); UIDropDownMenu_AddButton(info)
-            info.text, info.value, info.checked = "配方名", "name", (f.addType == "name"); UIDropDownMenu_AddButton(info)
-        end)
-        UIDropDownMenu_SetSelectedValue(typeDropdown, "spell")
-        if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, "法术") end
-        f.typeDropdown = typeDropdown
+        typeLabel:SetText("添加类型(名称或id):")
+        local typeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        typeBtn:SetSize(100, 22)
+        typeBtn:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
+        typeBtn:SetText("成品")
+        f.typeBtn = typeBtn
         f.typeNames = typeNames
+        typeBtn:SetScript("OnClick", function()
+            local nextIdx = 1
+            for i, k in ipairs(typeOrder) do
+                if k == (f.addType or "item") then nextIdx = (i % #typeOrder) + 1; break end
+            end
+            f.addType = typeOrder[nextIdx]
+            typeBtn:SetText(typeNames[f.addType])
+        end)
 
         local addRow = CreateFrame("Frame", nil, f)
         addRow:SetSize(320, 24)
@@ -1150,7 +1139,7 @@ function L.ShowCooldownWhitelistDetail()
         addBtn:SetText("添加")
         addBtn:SetScript("OnClick", function()
             local str = addEdit:GetText()
-            local typ = f.addType or "spell"
+            local typ = f.addType or "item"
             local wl = ProfLevelHelperDB.RecipeWhitelist
             if not wl.spell then wl.spell = {} end
             if not wl.item then wl.item = {} end
@@ -1207,11 +1196,8 @@ function L.ShowCooldownWhitelistDetail()
         f.closeBtn = closeBtn
     end
 
-    if f.typeDropdown and UIDropDownMenu_SetSelectedValue then
-        local cur = f.addType or "spell"
-        UIDropDownMenu_SetSelectedValue(f.typeDropdown, cur)
-        if UIDropDownMenu_SetSelectedName and f.typeNames then UIDropDownMenu_SetSelectedName(f.typeDropdown, f.typeNames[cur]) end
-        UIDropDownMenu_Refresh(f.typeDropdown)
+    if f.typeBtn and f.typeNames then
+        f.typeBtn:SetText(f.typeNames[f.addType or "item"] or "成品")
     end
 
     local content = f.scrollContent

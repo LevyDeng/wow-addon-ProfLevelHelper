@@ -25,6 +25,7 @@
     "UIDropDownMenu_AddButton",
     "UIDropDownMenu_CreateInfo",
     "UIDropDownMenu_Refresh",
-    "UIDropDownMenu_SetSelectedName"
+    "UIDropDownMenu_SetSelectedName",
+    "UIDropDownMenu_SetText"
   ]
 }
