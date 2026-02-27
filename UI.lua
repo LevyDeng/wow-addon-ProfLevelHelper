@@ -1276,15 +1276,98 @@ function L.ShowResultList()
         local ok, a, b, c, d, e = pcall(function()
             return L.CalculateLevelingRoute(startSkill, endSkill, includeHoliday)
         end)
+        local route, profName, actualStart, actualEnd, totalCost
         if not ok then
             L.Print("|cffff0000ProfLevelHelper 错误: " .. tostring(a) .. "|r")
+            route = nil
+            profName = nil
+            actualStart = startSkill
+            actualEnd = endSkill
+        else
+            route, profName, actualStart, actualEnd, totalCost = a, b, c, d, e
+        end
+
+        local function ensureResultFrameAndShowNoRoute(msg)
+            if not L.ResultFrame then
+                local fr = CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
+                L.ResultFrame = fr
+                fr:SetSize(660, 480)
+                fr:SetPoint("CENTER")
+                fr:SetFrameStrata("DIALOG")
+                fr:SetBackdrop({
+                    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                    tile = true, tileSize = 32, edgeSize = 32,
+                    insets = { left = 11, right = 12, top = 12, bottom = 11 },
+                })
+                fr:SetBackdropColor(0, 0, 0, 0.9)
+                fr:EnableMouse(true)
+                fr:SetMovable(true)
+                fr:RegisterForDrag("LeftButton")
+                fr:SetScript("OnDragStart", fr.StartMoving)
+                fr:SetScript("OnDragStop", fr.StopMovingOrSizing)
+                local title = fr:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+                title:SetPoint("TOP", 0, -12)
+                fr.title = title
+                local ahTimeLabel = fr:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                ahTimeLabel:SetPoint("TOPLEFT", 20, -30)
+                fr.ahTimeLabel = ahTimeLabel
+                local scroll = CreateFrame("ScrollFrame", "ProfLevelHelperResultScroll", fr, "UIPanelScrollFrameTemplate")
+                scroll:SetPoint("TOPLEFT", 20, -44)
+                scroll:SetPoint("BOTTOMRIGHT", -36, 46)
+                fr.scroll = scroll
+                local content = CreateFrame("Frame", nil, scroll)
+                content:SetSize(scroll:GetWidth() - 20, 1)
+                scroll:SetScrollChild(content)
+                fr.content = content
+                local close = CreateFrame("Button", nil, fr, "UIPanelButtonTemplate")
+                close:SetSize(100, 22)
+                close:SetPoint("BOTTOMRIGHT", -20, 12)
+                close:SetText("关闭")
+                close:SetScript("OnClick", function() fr:Hide() end)
+                fr.closeBtn = close
+                local exportBtn = CreateFrame("Button", nil, fr, "UIPanelButtonTemplate")
+                exportBtn:SetSize(100, 22)
+                exportBtn:SetPoint("BOTTOM", 0, 12)
+                exportBtn:SetText("复制到剪贴板")
+                exportBtn:SetScript("OnClick", function() if L.ShowExportFrame then L.ShowExportFrame() end end)
+                fr.exportBtn = exportBtn
+                local optionsBtn = CreateFrame("Button", nil, fr, "UIPanelButtonTemplate")
+                optionsBtn:SetSize(100, 22)
+                optionsBtn:SetPoint("BOTTOMLEFT", 20, 12)
+                optionsBtn:SetText("更改选项")
+                optionsBtn:SetScript("OnClick", function() L.OpenOptions() end)
+                fr.optionsBtn = optionsBtn
+            end
+            local f = L.ResultFrame
+            f.title:SetText(msg or "冲点推荐")
+            f.ahTimeLabel:SetText("AH data updated: " .. L.FormatAHScanTime())
+            local content = f.content
+            if content.lines then for _, g in ipairs(content.lines) do g:Hide() end end
+            if content.segmentBtns then for _, b in ipairs(content.segmentBtns) do b:Hide() end end
+            content.lines = {}
+            content.segmentBtns = {}
+            local hint = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            hint:SetPoint("TOPLEFT", 0, 0)
+            hint:SetWidth(f:GetWidth() - 60)
+            hint:SetWordWrap(true)
+            hint:SetNonSpaceWrap(true)
+            hint:SetText("请点击下方「更改选项」调整目标等级、黑名单/白名单、数据源等后重试。")
+            table.insert(content.lines, hint)
+            content:SetHeight(40)
+            f:Show()
+        end
+
+        if not ok then
+            ensureResultFrameAndShowNoRoute("ProfLevelHelper 计算出错，请检查配置或重试。")
             return
         end
-        local route, profName, actualStart, actualEnd, totalCost = a, b, c, d, e
         if not route or #route == 0 then
             local s = actualStart or startSkill or "?"
             local e = actualEnd or endSkill or "?"
+            local msg = profName and ("未找到 " .. s .. " -> " .. e .. " 的冲级路线，请修改配置后重试。") or "请先打开专业技能窗口。"
             L.Print(profName and ("无法找到一条从 " .. s .. " 到 ".. e .. " 的冲级路线，可能是缺乏有效配方或者拍卖行数据不足。") or "请先打开专业技能窗口。")
+            ensureResultFrameAndShowNoRoute(msg)
             return
         end
 
