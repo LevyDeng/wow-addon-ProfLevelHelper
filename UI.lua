@@ -933,7 +933,7 @@ function L.ShowCooldownBlacklistDetail()
         local typeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
         typeBtn:SetSize(100, 22)
         typeBtn:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
-        typeBtn:SetText("成品")
+        typeBtn:SetText("成品(点击切换)")
         f.typeBtn = typeBtn
         f.typeNames = typeNames
         typeBtn:SetScript("OnClick", function()
@@ -942,7 +942,7 @@ function L.ShowCooldownBlacklistDetail()
                 if k == (f.addType or "item") then nextIdx = (i % #typeOrder) + 1; break end
             end
             f.addType = typeOrder[nextIdx]
-            typeBtn:SetText(typeNames[f.addType])
+            typeBtn:SetText((typeNames[f.addType] or "成品") .. "(点击切换)")
         end)
 
         local addRow = CreateFrame("Frame", nil, f)
@@ -1019,39 +1019,40 @@ function L.ShowCooldownBlacklistDetail()
         f.closeBtn = closeBtn
     end
 
-    if f.typeBtn and f.typeNames then
-        f.typeBtn:SetText(f.typeNames[f.addType or "item"] or "成品")
-    end
-
-    local content = f.scrollContent
-    content:SetHeight(1)
-    for k, row in pairs(content) do
-        if type(row) == "table" and row.Hide then row:Hide() end
-    end
-
-    local ROW_H = 22
-    local y = 0
-    for i, entry in ipairs(list) do
-        local row = content["row_" .. i]
-        if not row then
-            row = CreateFrame("Frame", nil, content)
-            row:SetHeight(ROW_H)
-            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            row.label:SetPoint("LEFT", 8, 0)
-            row.label:SetPoint("RIGHT", -70, 0)
-            row.label:SetWordWrap(false)
-            row.btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-            row.btn:SetSize(50, 18)
-            row.btn:SetPoint("RIGHT", 0, 0)
-            row.btn:SetText("移除")
-            content["row_" .. i] = row
+        if f.typeBtn and f.typeNames then
+            local txt = f.typeNames[f.addType or "item"] or "成品"
+            f.typeBtn:SetText(txt .. "(点击切换)")
         end
-        row:SetPoint("TOPLEFT", 0, -y)
-        row:SetPoint("TOPRIGHT", 0, -y)
-        row.label:SetText(entry.display)
-        local typ, id = entry.type, entry.id
-        row.btn:SetScript("OnClick", function()
-            local bl = ProfLevelHelperDB.RecipeBlacklist
+
+        local content = f.scrollContent
+        content:SetHeight(1)
+        for k, row in pairs(content) do
+            if type(row) == "table" and row.Hide then row:Hide() end
+        end
+
+        local ROW_H = 22
+        local y = 0
+        for i, entry in ipairs(list) do
+            local row = content["row_" .. i]
+            if not row then
+                row = CreateFrame("Frame", nil, content)
+                row:SetHeight(ROW_H)
+                row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                row.label:SetPoint("LEFT", 8, 0)
+                row.label:SetPoint("RIGHT", -70, 0)
+                row.label:SetWordWrap(false)
+                row.btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+                row.btn:SetSize(50, 18)
+                row.btn:SetPoint("RIGHT", 0, 0)
+                row.btn:SetText("移除")
+                content["row_" .. i] = row
+            end
+            row:SetPoint("TOPLEFT", 0, -y)
+            row:SetPoint("TOPRIGHT", 0, -y)
+            row.label:SetText(entry.display)
+            local typ, id = entry.type, entry.id
+            row.btn:SetScript("OnClick", function()
+                local bl = ProfLevelHelperDB.RecipeBlacklist
             if bl then
                 if typ == "spell" and bl.spell then bl.spell[id] = nil
                 elseif typ == "item" and bl.item then bl.item[id] = nil
@@ -1110,7 +1111,7 @@ function L.ShowCooldownWhitelistDetail()
         local typeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
         typeBtn:SetSize(100, 22)
         typeBtn:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
-        typeBtn:SetText("成品")
+        typeBtn:SetText("成品(点击切换)")
         f.typeBtn = typeBtn
         f.typeNames = typeNames
         typeBtn:SetScript("OnClick", function()
@@ -1119,7 +1120,7 @@ function L.ShowCooldownWhitelistDetail()
                 if k == (f.addType or "item") then nextIdx = (i % #typeOrder) + 1; break end
             end
             f.addType = typeOrder[nextIdx]
-            typeBtn:SetText(typeNames[f.addType])
+            typeBtn:SetText((typeNames[f.addType] or "成品") .. "(点击切换)")
         end)
 
         local addRow = CreateFrame("Frame", nil, f)
@@ -1197,7 +1198,8 @@ function L.ShowCooldownWhitelistDetail()
     end
 
     if f.typeBtn and f.typeNames then
-        f.typeBtn:SetText(f.typeNames[f.addType or "item"] or "成品")
+        local txt = f.typeNames[f.addType or "item"] or "成品"
+        f.typeBtn:SetText(txt .. "(点击切换)")
     end
 
     local content = f.scrollContent
