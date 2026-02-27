@@ -909,16 +909,21 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                     end
                 end
             end
-            -- Cooldown recipe filter: blacklist/whitelist by spell ID (ala path); native path has no rec.sid so list does not apply.
-            if allowed and rec.cooldownSeconds and rec.cooldownSeconds > 0 then
-                local sid = rec.sid
-                if sid and db.CooldownRecipesBlacklist and db.CooldownRecipesBlacklist[sid] then
+            -- Generic recipe blacklist: always exclude (by spell ID, product item ID, or recipe name).
+            local bl = db.RecipeBlacklist
+            if allowed and bl then
+                if (rec.sid and bl.spell and bl.spell[rec.sid]) or (rec.createdItemID and bl.item and bl.item[rec.createdItemID]) then
                     allowed = false
-                elseif db.ExcludeCooldownRecipes then
-                    if not (sid and db.CooldownRecipesWhitelist and db.CooldownRecipesWhitelist[sid]) then
-                        allowed = false
-                    end
                 end
+                if allowed and bl.name then
+                    if (rec.name and bl.name[rec.name]) or (rec.recipeName and bl.name[rec.recipeName]) then allowed = false end
+                end
+            end
+            -- Whitelist: always allow. CD exclude: only exclude CD recipes that are not whitelisted.
+            local wl = db.RecipeWhitelist
+            local isWhitelisted = wl and ((rec.sid and wl.spell and wl.spell[rec.sid]) or (rec.createdItemID and wl.item and wl.item[rec.createdItemID]) or (wl.name and ((rec.name and wl.name[rec.name]) or (rec.recipeName and wl.name[rec.recipeName]))))
+            if allowed and rec.cooldownSeconds and rec.cooldownSeconds > 0 and db.ExcludeCooldownRecipes and not isWhitelisted then
+                allowed = false
             end
             if allowed then filteredRecipes[#filteredRecipes + 1] = rec end
         end

@@ -55,6 +55,27 @@ function L.ParseSpellIdFromAddInput(str, spellIdList)
     return nil
 end
 
+-- Count total entries in generic recipe list (spell + item + name).
+function L.RecipeListCount(t)
+    if not t or type(t) ~= "table" then return 0 end
+    local n = 0
+    if t.spell then for _ in pairs(t.spell) do n = n + 1 end end
+    if t.item then for _ in pairs(t.item) do n = n + 1 end end
+    if t.name then for _ in pairs(t.name) do n = n + 1 end end
+    return n
+end
+
+-- Build flat list { { type, id, display }, ... } from RecipeBlacklist/Whitelist for UI.
+function L.RecipeListEntries(t)
+    local list = {}
+    if not t then return list end
+    if t.spell then for sid in pairs(t.spell) do list[#list + 1] = { type = "spell", id = sid, display = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid)) .. " (id:" .. tostring(sid) .. ")" } end end
+    if t.item then for id in pairs(t.item) do list[#list + 1] = { type = "item", id = id, display = (GetItemInfo and GetItemInfo(id)) or ("Item " .. tostring(id)) .. " (id:" .. tostring(id) .. ")" } end end
+    if t.name then for name in pairs(t.name) do list[#list + 1] = { type = "name", id = name, display = name end end end
+    table.sort(list, function(a, b) return (a.display or "") < (b.display or "") end)
+    return list
+end
+
 -- Scan progress frame (shown during AH scan)
 function L.ShowScanProgress()
     local f = L.ScanProgressFrame
@@ -468,7 +489,7 @@ function L.OpenOptions()
     cdBlLabel:SetWidth(332)
     cdBlLabel:SetWordWrap(true)
     cdBlLabel:SetNonSpaceWrap(false)
-    cdBlLabel:SetText("CD配方黑名单(按法术ID排除，不受上方勾选影响):")
+    cdBlLabel:SetText("配方黑名单(一律排除；先选类型再输入):")
     f.cdBlLabel = cdBlLabel
     local cdBlCountText = f.cdBlCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     cdBlCountText:SetPoint("TOPLEFT", cdBlLabel, "BOTTOMLEFT", 0, -4)
@@ -487,7 +508,7 @@ function L.OpenOptions()
     cdWlLabel:SetWidth(332)
     cdWlLabel:SetWordWrap(true)
     cdWlLabel:SetNonSpaceWrap(false)
-    cdWlLabel:SetText("CD配方白名单(按法术ID，勾选排除CD时仍允许):")
+    cdWlLabel:SetText("配方白名单(一律允许，勾选排除CD时仍允许；先选类型再输入):")
     f.cdWlLabel = cdWlLabel
     local cdWlCountText = f.cdWlCountText or content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     cdWlCountText:SetPoint("TOPLEFT", cdWlLabel, "BOTTOMLEFT", 0, -4)
@@ -530,14 +551,8 @@ function L.OpenOptions()
     end
     if f.blCountText then f.blCountText:SetText("已屏蔽 " .. nBl .. " 种") end
     if f.wlCountText then f.wlCountText:SetText("已添加 " .. nWl .. " 种") end
-    local nCdBl = 0
-    if ProfLevelHelperDB.CooldownRecipesBlacklist then
-        for _ in pairs(ProfLevelHelperDB.CooldownRecipesBlacklist) do nCdBl = nCdBl + 1 end
-    end
-    local nCdWl = 0
-    if ProfLevelHelperDB.CooldownRecipesWhitelist then
-        for _ in pairs(ProfLevelHelperDB.CooldownRecipesWhitelist) do nCdWl = nCdWl + 1 end
-    end
+    local nCdBl = L.RecipeListCount(ProfLevelHelperDB.RecipeBlacklist)
+    local nCdWl = L.RecipeListCount(ProfLevelHelperDB.RecipeWhitelist)
     if f.cdBlCountText then f.cdBlCountText:SetText("已屏蔽 " .. nCdBl .. " 种") end
     if f.cdWlCountText then f.cdWlCountText:SetText("已添加 " .. nCdWl .. " 种") end
     local nKnownCd = 0
@@ -856,18 +871,16 @@ function L.ShowAHSellBackWhitelistDetail()
     f:Show()
 end
 
--- CD recipe blacklist detail: list by spell ID
+-- Recipe blacklist detail: type selector (spell/item/name) then input, list all three.
 function L.ShowCooldownBlacklistDetail()
-    local bl = ProfLevelHelperDB.CooldownRecipesBlacklist or {}
-    local list = {}
-    for id in pairs(bl) do list[#list + 1] = id end
-    table.sort(list)
+    local bl = ProfLevelHelperDB.RecipeBlacklist or { spell = {}, item = {}, name = {} }
+    local list = L.RecipeListEntries(bl)
 
     local f = L.CooldownBlacklistDetailFrame
     if not f then
         f = CreateFrame("Frame", "ProfLevelHelperCDBlacklistDetail", UIParent, "BackdropTemplate")
         L.CooldownBlacklistDetailFrame = f
-        f:SetSize(340, 380)
+        f:SetSize(360, 400)
         f:SetPoint("CENTER")
         f:SetFrameStrata("DIALOG")
         if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
@@ -886,15 +899,40 @@ function L.ShowCooldownBlacklistDetail()
 
         local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         title:SetPoint("TOP", 0, -16)
-        title:SetText("CD配方黑名单")
+        title:SetText("配方黑名单")
         f.title = title
 
+        f.addType = "spell"
+        local typeRow = CreateFrame("Frame", nil, f)
+        typeRow:SetSize(320, 24)
+        typeRow:SetPoint("TOP", 0, -40)
+        local typeLabel = typeRow:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        typeLabel:SetPoint("LEFT", 12, 0)
+        typeLabel:SetText("添加类型:")
+        f.typeLabel = typeLabel
+        local btnSpell = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
+        btnSpell:SetSize(56, 20)
+        btnSpell:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
+        btnSpell:SetText("法术")
+        btnSpell:SetScript("OnClick", function() f.addType = "spell" end)
+        local btnItem = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
+        btnItem:SetSize(56, 20)
+        btnItem:SetPoint("LEFT", btnSpell, "RIGHT", 4, 0)
+        btnItem:SetText("成品")
+        btnItem:SetScript("OnClick", function() f.addType = "item" end)
+        local btnName = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
+        btnName:SetSize(56, 20)
+        btnName:SetPoint("LEFT", btnItem, "RIGHT", 4, 0)
+        btnName:SetText("配方名")
+        btnName:SetScript("OnClick", function() f.addType = "name" end)
+        f.typeBtns = { spell = btnSpell, item = btnItem, name = btnName }
+
         local addRow = CreateFrame("Frame", nil, f)
-        addRow:SetSize(300, 24)
-        addRow:SetPoint("TOP", 0, -40)
+        addRow:SetSize(320, 24)
+        addRow:SetPoint("TOP", 0, -64)
         f.addRow = addRow
         local addEdit = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
-        addEdit:SetSize(180, 20)
+        addEdit:SetSize(200, 20)
         addEdit:SetPoint("LEFT", 12, 0)
         addEdit:SetAutoFocus(false)
         addEdit:SetScript("OnEnterPressed", function() addEdit:ClearFocus() end)
@@ -906,39 +944,39 @@ function L.ShowCooldownBlacklistDetail()
         addBtn:SetText("添加")
         addBtn:SetScript("OnClick", function()
             local str = addEdit:GetText()
-            local known = ProfLevelHelperDB.KnownCooldownSpellIDs or {}
-            local id = L.ParseSpellIdFromAddInput and (L.ParseSpellIdFromAddInput(str) or L.ParseSpellIdFromAddInput(str, known))
-            if id and id > 0 then
-                ProfLevelHelperDB.CooldownRecipesBlacklist = ProfLevelHelperDB.CooldownRecipesBlacklist or {}
-                ProfLevelHelperDB.CooldownRecipesBlacklist[id] = true
+            local typ = f.addType or "spell"
+            local bl = ProfLevelHelperDB.RecipeBlacklist
+            if not bl.spell then bl.spell = {} end
+            if not bl.item then bl.item = {} end
+            if not bl.name then bl.name = {} end
+            local ok = false
+            if typ == "spell" then
+                local known = ProfLevelHelperDB.KnownCooldownSpellIDs or {}
+                local id = L.ParseSpellIdFromAddInput(str, known)
+                if id and id > 0 then bl.spell[id] = true; ok = true end
+            elseif typ == "item" then
+                local id = L.ParseItemIdFromAddInput(str, ProfLevelHelperDB)
+                if id and id > 0 then bl.item[id] = true; ok = true end
+            else
+                local trimmed = str and str:match("^%s*(.-)%s*$") or ""
+                if trimmed ~= "" then bl.name[trimmed] = true; ok = true end
+            end
+            if ok then
                 addEdit:SetText("")
                 local opt = L.OptionsFrame
-                if opt and opt.cdBlCountText then
-                    local n = 0
-                    for _ in pairs(ProfLevelHelperDB.CooldownRecipesBlacklist) do n = n + 1 end
-                    opt.cdBlCountText:SetText("已屏蔽 " .. n .. " 种")
-                end
+                if opt and opt.cdBlCountText then opt.cdBlCountText:SetText("已屏蔽 " .. L.RecipeListCount(ProfLevelHelperDB.RecipeBlacklist) .. " 种") end
                 if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
                 L.ShowCooldownBlacklistDetail()
-            else
-                local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
-                if trimmed and trimmed ~= "" then
-                    L.Print("请输入法术ID、法术链接或法术名称。")
-                end
             end
         end)
         f.addBtn = addBtn
-        local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
-        addHint:SetText("(法术ID/链接/名称)")
-        f.addHint = addHint
 
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 12, -68)
+        scroll:SetPoint("TOPLEFT", 12, -92)
         scroll:SetPoint("BOTTOMRIGHT", -32, 52)
         f.scroll = scroll
         local content = CreateFrame("Frame", nil, scroll)
-        content:SetSize(280, 1)
+        content:SetSize(300, 1)
         scroll:SetScrollChild(content)
         f.scrollContent = content
 
@@ -947,7 +985,7 @@ function L.ShowCooldownBlacklistDetail()
         clearBtn:SetPoint("BOTTOM", -60, 16)
         clearBtn:SetText("清空黑名单")
         clearBtn:SetScript("OnClick", function()
-            ProfLevelHelperDB.CooldownRecipesBlacklist = {}
+            ProfLevelHelperDB.RecipeBlacklist = { spell = {}, item = {}, name = {} }
             local opt = L.OptionsFrame
             if opt and opt.cdBlCountText then opt.cdBlCountText:SetText("已屏蔽 0 种") end
             if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
@@ -963,6 +1001,14 @@ function L.ShowCooldownBlacklistDetail()
         f.closeBtn = closeBtn
     end
 
+    -- Show current add type on buttons (selected = bracket)
+    local cur = f.addType or "spell"
+    if f.typeBtns then
+        f.typeBtns.spell:SetText(cur == "spell" and "[法术]" or "法术")
+        f.typeBtns.item:SetText(cur == "item" and "[成品]" or "成品")
+        f.typeBtns.name:SetText(cur == "name" and "[配方名]" or "配方名")
+    end
+
     local content = f.scrollContent
     content:SetHeight(1)
     for k, row in pairs(content) do
@@ -971,10 +1017,8 @@ function L.ShowCooldownBlacklistDetail()
 
     local ROW_H = 22
     local y = 0
-    for _, sid in ipairs(list) do
-        local name = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid))
-        local displayText = name .. " (id:" .. tostring(sid) .. ")"
-        local row = content["row_" .. sid]
+    for i, entry in ipairs(list) do
+        local row = content["row_" .. i]
         if not row then
             row = CreateFrame("Frame", nil, content)
             row:SetHeight(ROW_H)
@@ -986,17 +1030,21 @@ function L.ShowCooldownBlacklistDetail()
             row.btn:SetSize(50, 18)
             row.btn:SetPoint("RIGHT", 0, 0)
             row.btn:SetText("移除")
-            content["row_" .. sid] = row
+            content["row_" .. i] = row
         end
         row:SetPoint("TOPLEFT", 0, -y)
         row:SetPoint("TOPRIGHT", 0, -y)
-        row.label:SetText(displayText)
+        row.label:SetText(entry.display)
+        local typ, id = entry.type, entry.id
         row.btn:SetScript("OnClick", function()
-            if ProfLevelHelperDB.CooldownRecipesBlacklist then ProfLevelHelperDB.CooldownRecipesBlacklist[sid] = nil end
-            local n = 0
-            if ProfLevelHelperDB.CooldownRecipesBlacklist then for _ in pairs(ProfLevelHelperDB.CooldownRecipesBlacklist) do n = n + 1 end end
+            local bl = ProfLevelHelperDB.RecipeBlacklist
+            if bl then
+                if typ == "spell" and bl.spell then bl.spell[id] = nil
+                elseif typ == "item" and bl.item then bl.item[id] = nil
+                elseif typ == "name" and bl.name then bl.name[id] = nil end
+            end
             local opt = L.OptionsFrame
-            if opt and opt.cdBlCountText then opt.cdBlCountText:SetText("已屏蔽 " .. n .. " 种") end
+            if opt and opt.cdBlCountText then opt.cdBlCountText:SetText("已屏蔽 " .. L.RecipeListCount(ProfLevelHelperDB.RecipeBlacklist) .. " 种") end
             if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
             L.ShowCooldownBlacklistDetail()
         end)
@@ -1008,18 +1056,16 @@ function L.ShowCooldownBlacklistDetail()
     f:Show()
 end
 
--- CD recipe whitelist detail
+-- Recipe whitelist detail: type selector (spell/item/name) then input, list all three.
 function L.ShowCooldownWhitelistDetail()
-    local wl = ProfLevelHelperDB.CooldownRecipesWhitelist or {}
-    local list = {}
-    for id in pairs(wl) do list[#list + 1] = id end
-    table.sort(list)
+    local wl = ProfLevelHelperDB.RecipeWhitelist or { spell = {}, item = {}, name = {} }
+    local list = L.RecipeListEntries(wl)
 
     local f = L.CooldownWhitelistDetailFrame
     if not f then
         f = CreateFrame("Frame", "ProfLevelHelperCDWhitelistDetail", UIParent, "BackdropTemplate")
         L.CooldownWhitelistDetailFrame = f
-        f:SetSize(340, 380)
+        f:SetSize(360, 400)
         f:SetPoint("CENTER")
         f:SetFrameStrata("DIALOG")
         if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
@@ -1038,15 +1084,39 @@ function L.ShowCooldownWhitelistDetail()
 
         local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         title:SetPoint("TOP", 0, -16)
-        title:SetText("CD配方白名单")
+        title:SetText("配方白名单")
         f.title = title
 
+        f.addType = "spell"
+        local typeRow = CreateFrame("Frame", nil, f)
+        typeRow:SetSize(320, 24)
+        typeRow:SetPoint("TOP", 0, -40)
+        local typeLabel = typeRow:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        typeLabel:SetPoint("LEFT", 12, 0)
+        typeLabel:SetText("添加类型:")
+        local btnSpell = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
+        btnSpell:SetSize(56, 20)
+        btnSpell:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
+        btnSpell:SetText("法术")
+        btnSpell:SetScript("OnClick", function() f.addType = "spell" end)
+        local btnItem = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
+        btnItem:SetSize(56, 20)
+        btnItem:SetPoint("LEFT", btnSpell, "RIGHT", 4, 0)
+        btnItem:SetText("成品")
+        btnItem:SetScript("OnClick", function() f.addType = "item" end)
+        local btnName = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
+        btnName:SetSize(56, 20)
+        btnName:SetPoint("LEFT", btnItem, "RIGHT", 4, 0)
+        btnName:SetText("配方名")
+        btnName:SetScript("OnClick", function() f.addType = "name" end)
+        f.typeBtns = { spell = btnSpell, item = btnItem, name = btnName }
+
         local addRow = CreateFrame("Frame", nil, f)
-        addRow:SetSize(300, 24)
-        addRow:SetPoint("TOP", 0, -40)
+        addRow:SetSize(320, 24)
+        addRow:SetPoint("TOP", 0, -64)
         f.addRow = addRow
         local addEdit = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
-        addEdit:SetSize(180, 20)
+        addEdit:SetSize(200, 20)
         addEdit:SetPoint("LEFT", 12, 0)
         addEdit:SetAutoFocus(false)
         addEdit:SetScript("OnEnterPressed", function() addEdit:ClearFocus() end)
@@ -1058,39 +1128,39 @@ function L.ShowCooldownWhitelistDetail()
         addBtn:SetText("添加")
         addBtn:SetScript("OnClick", function()
             local str = addEdit:GetText()
-            local known = ProfLevelHelperDB.KnownCooldownSpellIDs or {}
-            local id = L.ParseSpellIdFromAddInput and (L.ParseSpellIdFromAddInput(str) or L.ParseSpellIdFromAddInput(str, known))
-            if id and id > 0 then
-                ProfLevelHelperDB.CooldownRecipesWhitelist = ProfLevelHelperDB.CooldownRecipesWhitelist or {}
-                ProfLevelHelperDB.CooldownRecipesWhitelist[id] = true
+            local typ = f.addType or "spell"
+            local wl = ProfLevelHelperDB.RecipeWhitelist
+            if not wl.spell then wl.spell = {} end
+            if not wl.item then wl.item = {} end
+            if not wl.name then wl.name = {} end
+            local ok = false
+            if typ == "spell" then
+                local known = ProfLevelHelperDB.KnownCooldownSpellIDs or {}
+                local id = L.ParseSpellIdFromAddInput(str, known)
+                if id and id > 0 then wl.spell[id] = true; ok = true end
+            elseif typ == "item" then
+                local id = L.ParseItemIdFromAddInput(str, ProfLevelHelperDB)
+                if id and id > 0 then wl.item[id] = true; ok = true end
+            else
+                local trimmed = str and str:match("^%s*(.-)%s*$") or ""
+                if trimmed ~= "" then wl.name[trimmed] = true; ok = true end
+            end
+            if ok then
                 addEdit:SetText("")
                 local opt = L.OptionsFrame
-                if opt and opt.cdWlCountText then
-                    local n = 0
-                    for _ in pairs(ProfLevelHelperDB.CooldownRecipesWhitelist) do n = n + 1 end
-                    opt.cdWlCountText:SetText("已添加 " .. n .. " 种")
-                end
+                if opt and opt.cdWlCountText then opt.cdWlCountText:SetText("已添加 " .. L.RecipeListCount(ProfLevelHelperDB.RecipeWhitelist) .. " 种") end
                 if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
                 L.ShowCooldownWhitelistDetail()
-            else
-                local trimmed = str and (str:gsub("^%s+", ""):gsub("%s+$", "") or "")
-                if trimmed and trimmed ~= "" then
-                    L.Print("请输入法术ID、法术链接或法术名称。")
-                end
             end
         end)
         f.addBtn = addBtn
-        local addHint = addRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        addHint:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
-        addHint:SetText("(法术ID/链接/名称)")
-        f.addHint = addHint
 
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 12, -68)
+        scroll:SetPoint("TOPLEFT", 12, -92)
         scroll:SetPoint("BOTTOMRIGHT", -32, 52)
         f.scroll = scroll
         local content = CreateFrame("Frame", nil, scroll)
-        content:SetSize(280, 1)
+        content:SetSize(300, 1)
         scroll:SetScrollChild(content)
         f.scrollContent = content
 
@@ -1099,7 +1169,7 @@ function L.ShowCooldownWhitelistDetail()
         clearBtn:SetPoint("BOTTOM", -60, 16)
         clearBtn:SetText("清空白名单")
         clearBtn:SetScript("OnClick", function()
-            ProfLevelHelperDB.CooldownRecipesWhitelist = {}
+            ProfLevelHelperDB.RecipeWhitelist = { spell = {}, item = {}, name = {} }
             local opt = L.OptionsFrame
             if opt and opt.cdWlCountText then opt.cdWlCountText:SetText("已添加 0 种") end
             if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
@@ -1115,6 +1185,13 @@ function L.ShowCooldownWhitelistDetail()
         f.closeBtn = closeBtn
     end
 
+    if f.typeBtns then
+        local cur = f.addType or "spell"
+        f.typeBtns.spell:SetText(cur == "spell" and "[法术]" or "法术")
+        f.typeBtns.item:SetText(cur == "item" and "[成品]" or "成品")
+        f.typeBtns.name:SetText(cur == "name" and "[配方名]" or "配方名")
+    end
+
     local content = f.scrollContent
     content:SetHeight(1)
     for k, row in pairs(content) do
@@ -1123,10 +1200,8 @@ function L.ShowCooldownWhitelistDetail()
 
     local ROW_H = 22
     local y = 0
-    for _, sid in ipairs(list) do
-        local name = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid))
-        local displayText = name .. " (id:" .. tostring(sid) .. ")"
-        local row = content["row_" .. sid]
+    for i, entry in ipairs(list) do
+        local row = content["row_" .. i]
         if not row then
             row = CreateFrame("Frame", nil, content)
             row:SetHeight(ROW_H)
@@ -1138,17 +1213,21 @@ function L.ShowCooldownWhitelistDetail()
             row.btn:SetSize(50, 18)
             row.btn:SetPoint("RIGHT", 0, 0)
             row.btn:SetText("移除")
-            content["row_" .. sid] = row
+            content["row_" .. i] = row
         end
         row:SetPoint("TOPLEFT", 0, -y)
         row:SetPoint("TOPRIGHT", 0, -y)
-        row.label:SetText(displayText)
+        row.label:SetText(entry.display)
+        local typ, id = entry.type, entry.id
         row.btn:SetScript("OnClick", function()
-            if ProfLevelHelperDB.CooldownRecipesWhitelist then ProfLevelHelperDB.CooldownRecipesWhitelist[sid] = nil end
-            local n = 0
-            if ProfLevelHelperDB.CooldownRecipesWhitelist then for _ in pairs(ProfLevelHelperDB.CooldownRecipesWhitelist) do n = n + 1 end end
+            local wl = ProfLevelHelperDB.RecipeWhitelist
+            if wl then
+                if typ == "spell" and wl.spell then wl.spell[id] = nil
+                elseif typ == "item" and wl.item then wl.item[id] = nil
+                elseif typ == "name" and wl.name then wl.name[id] = nil end
+            end
             local opt = L.OptionsFrame
-            if opt and opt.cdWlCountText then opt.cdWlCountText:SetText("已添加 " .. n .. " 种") end
+            if opt and opt.cdWlCountText then opt.cdWlCountText:SetText("已添加 " .. L.RecipeListCount(ProfLevelHelperDB.RecipeWhitelist) .. " 种") end
             if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
             L.ShowCooldownWhitelistDetail()
         end)

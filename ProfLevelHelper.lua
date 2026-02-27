@@ -57,8 +57,20 @@ local function InitDB()
     if db.IncludeSourceUnknown == nil then db.IncludeSourceUnknown = false end
 
     if db.ExcludeCooldownRecipes == nil then db.ExcludeCooldownRecipes = false end
-    db.CooldownRecipesBlacklist = db.CooldownRecipesBlacklist or {}
-    db.CooldownRecipesWhitelist = db.CooldownRecipesWhitelist or {}
+    -- Generic recipe blacklist/whitelist: spell ID, item ID (product), or recipe name. Three sub-tables each.
+    db.RecipeBlacklist = db.RecipeBlacklist or { spell = {}, item = {}, name = {} }
+    db.RecipeWhitelist = db.RecipeWhitelist or { spell = {}, item = {}, name = {} }
+    if type(db.RecipeBlacklist.spell) ~= "table" then db.RecipeBlacklist = { spell = {}, item = {}, name = {} } end
+    if type(db.RecipeWhitelist.spell) ~= "table" then db.RecipeWhitelist = { spell = {}, item = {}, name = {} } end
+    -- Migrate old CD-only lists (were spell ID keys) into generic spell table.
+    if db.CooldownRecipesBlacklist and type(db.CooldownRecipesBlacklist) == "table" then
+        for k in pairs(db.CooldownRecipesBlacklist) do if type(k) == "number" then db.RecipeBlacklist.spell[k] = true end end
+        db.CooldownRecipesBlacklist = nil
+    end
+    if db.CooldownRecipesWhitelist and type(db.CooldownRecipesWhitelist) == "table" then
+        for k in pairs(db.CooldownRecipesWhitelist) do if type(k) == "number" then db.RecipeWhitelist.spell[k] = true end end
+        db.CooldownRecipesWhitelist = nil
+    end
     -- CD by spell ID: merge from CooldownRecipes.lua (ProfLevelHelper_CooldownRecipes) into saved DB.
     db.KnownCooldownSpellIDs = db.KnownCooldownSpellIDs or {}
     local staticCd = ProfLevelHelper_CooldownRecipes or ProfLevelHelper_CooldownSpellIDs
