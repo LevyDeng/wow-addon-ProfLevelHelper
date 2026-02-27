@@ -3,6 +3,14 @@
 ]]
 
 local L = ProfLevelHelper
+if not L then
+    print("ProfLevelHelper: UI.lua - ProfLevelHelper global is nil, cannot load.")
+    return
+end
+-- Stub so L.ShowResultList is never nil; real definition overwrites this later. If you see stub message, UI.lua failed before line with "function L.ShowResultList".
+L.ShowResultList = L.ShowResultList or function()
+    if L and L.Print then L.Print("|cffff0000ShowResultList 仍是占位，说明 UI.lua 在定义真实函数前就报错或中断。请开启「显示 Lua 错误」后 /reload 查看报错。|r") end
+end
 
 function L.FormatAHScanTime()
     local t = ProfLevelHelperDB and ProfLevelHelperDB.AHScanTime
@@ -68,10 +76,24 @@ end
 -- Build flat list { { type, id, display }, ... } from RecipeBlacklist/Whitelist for UI.
 function L.RecipeListEntries(t)
     local list = {}
-    if not t then return list end
-    if t.spell then for sid in pairs(t.spell) do list[#list + 1] = { type = "spell", id = sid, display = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid)) .. " (id:" .. tostring(sid) .. ")" } end end
-    if t.item then for id in pairs(t.item) do list[#list + 1] = { type = "item", id = id, display = (GetItemInfo and GetItemInfo(id)) or ("Item " .. tostring(id)) .. " (id:" .. tostring(id) .. ")" } end end
-    if t.name then for name in pairs(t.name) do list[#list + 1] = { type = "name", id = name, display = name end end end
+    if not t or type(t) ~= "table" then return list end
+    if type(t.spell) == "table" then
+        for sid in pairs(t.spell) do
+            local name = (GetSpellInfo and GetSpellInfo(sid)) or ("Spell " .. tostring(sid))
+            list[#list + 1] = { type = "spell", id = sid, display = name .. " (id:" .. tostring(sid) .. ")" }
+        end
+    end
+    if type(t.item) == "table" then
+        for id in pairs(t.item) do
+            local name = (GetItemInfo and GetItemInfo(id)) or ("Item " .. tostring(id))
+            list[#list + 1] = { type = "item", id = id, display = name .. " (id:" .. tostring(id) .. ")" }
+        end
+    end
+    if type(t.name) == "table" then
+        for name in pairs(t.name) do
+            list[#list + 1] = { type = "name", id = name, display = name }
+        end
+    end
     table.sort(list, function(a, b) return (a.display or "") < (b.display or "") end)
     return list
 end
@@ -903,29 +925,29 @@ function L.ShowCooldownBlacklistDetail()
         f.title = title
 
         f.addType = "spell"
-        local typeRow = CreateFrame("Frame", nil, f)
-        typeRow:SetSize(320, 24)
-        typeRow:SetPoint("TOP", 0, -40)
-        local typeLabel = typeRow:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        typeLabel:SetPoint("LEFT", 12, 0)
+        local typeLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        typeLabel:SetPoint("TOPLEFT", 12, -40)
         typeLabel:SetText("添加类型:")
-        f.typeLabel = typeLabel
-        local btnSpell = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
-        btnSpell:SetSize(56, 20)
-        btnSpell:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
-        btnSpell:SetText("法术")
-        btnSpell:SetScript("OnClick", function() f.addType = "spell" end)
-        local btnItem = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
-        btnItem:SetSize(56, 20)
-        btnItem:SetPoint("LEFT", btnSpell, "RIGHT", 4, 0)
-        btnItem:SetText("成品")
-        btnItem:SetScript("OnClick", function() f.addType = "item" end)
-        local btnName = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
-        btnName:SetSize(56, 20)
-        btnName:SetPoint("LEFT", btnItem, "RIGHT", 4, 0)
-        btnName:SetText("配方名")
-        btnName:SetScript("OnClick", function() f.addType = "name" end)
-        f.typeBtns = { spell = btnSpell, item = btnItem, name = btnName }
+        local typeDropdown = CreateFrame("Frame", "ProfLevelHelperBLTypeDropdown", f, "UIDropDownMenuTemplate")
+        typeDropdown:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
+        UIDropDownMenu_SetWidth(typeDropdown, 100)
+        local typeNames = { spell = "法术", item = "成品", name = "配方名" }
+        UIDropDownMenu_Initialize(typeDropdown, function(self, level)
+            local info = UIDropDownMenu_CreateInfo()
+            info.func = function(_, val)
+                f.addType = val
+                UIDropDownMenu_SetSelectedValue(typeDropdown, val)
+                if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, typeNames[val]) end
+                UIDropDownMenu_Refresh(typeDropdown)
+            end
+            info.text, info.value, info.checked = "法术", "spell", (f.addType == "spell"); UIDropDownMenu_AddButton(info)
+            info.text, info.value, info.checked = "成品", "item", (f.addType == "item"); UIDropDownMenu_AddButton(info)
+            info.text, info.value, info.checked = "配方名", "name", (f.addType == "name"); UIDropDownMenu_AddButton(info)
+        end)
+        UIDropDownMenu_SetSelectedValue(typeDropdown, "spell")
+        if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, "法术") end
+        f.typeDropdown = typeDropdown
+        f.typeNames = typeNames
 
         local addRow = CreateFrame("Frame", nil, f)
         addRow:SetSize(320, 24)
@@ -1001,12 +1023,11 @@ function L.ShowCooldownBlacklistDetail()
         f.closeBtn = closeBtn
     end
 
-    -- Show current add type on buttons (selected = bracket)
-    local cur = f.addType or "spell"
-    if f.typeBtns then
-        f.typeBtns.spell:SetText(cur == "spell" and "[法术]" or "法术")
-        f.typeBtns.item:SetText(cur == "item" and "[成品]" or "成品")
-        f.typeBtns.name:SetText(cur == "name" and "[配方名]" or "配方名")
+    if f.typeDropdown and UIDropDownMenu_SetSelectedValue then
+        local cur = f.addType or "spell"
+        UIDropDownMenu_SetSelectedValue(f.typeDropdown, cur)
+        if UIDropDownMenu_SetSelectedName and f.typeNames then UIDropDownMenu_SetSelectedName(f.typeDropdown, f.typeNames[cur]) end
+        UIDropDownMenu_Refresh(f.typeDropdown)
     end
 
     local content = f.scrollContent
@@ -1088,28 +1109,29 @@ function L.ShowCooldownWhitelistDetail()
         f.title = title
 
         f.addType = "spell"
-        local typeRow = CreateFrame("Frame", nil, f)
-        typeRow:SetSize(320, 24)
-        typeRow:SetPoint("TOP", 0, -40)
-        local typeLabel = typeRow:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        typeLabel:SetPoint("LEFT", 12, 0)
+        local typeLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        typeLabel:SetPoint("TOPLEFT", 12, -40)
         typeLabel:SetText("添加类型:")
-        local btnSpell = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
-        btnSpell:SetSize(56, 20)
-        btnSpell:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
-        btnSpell:SetText("法术")
-        btnSpell:SetScript("OnClick", function() f.addType = "spell" end)
-        local btnItem = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
-        btnItem:SetSize(56, 20)
-        btnItem:SetPoint("LEFT", btnSpell, "RIGHT", 4, 0)
-        btnItem:SetText("成品")
-        btnItem:SetScript("OnClick", function() f.addType = "item" end)
-        local btnName = CreateFrame("Button", nil, typeRow, "UIPanelButtonTemplate")
-        btnName:SetSize(56, 20)
-        btnName:SetPoint("LEFT", btnItem, "RIGHT", 4, 0)
-        btnName:SetText("配方名")
-        btnName:SetScript("OnClick", function() f.addType = "name" end)
-        f.typeBtns = { spell = btnSpell, item = btnItem, name = btnName }
+        local typeDropdown = CreateFrame("Frame", "ProfLevelHelperWLTypeDropdown", f, "UIDropDownMenuTemplate")
+        typeDropdown:SetPoint("LEFT", typeLabel, "RIGHT", 8, 0)
+        UIDropDownMenu_SetWidth(typeDropdown, 100)
+        local typeNames = { spell = "法术", item = "成品", name = "配方名" }
+        UIDropDownMenu_Initialize(typeDropdown, function(self, level)
+            local info = UIDropDownMenu_CreateInfo()
+            info.func = function(_, val)
+                f.addType = val
+                UIDropDownMenu_SetSelectedValue(typeDropdown, val)
+                if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, typeNames[val]) end
+                UIDropDownMenu_Refresh(typeDropdown)
+            end
+            info.text, info.value, info.checked = "法术", "spell", (f.addType == "spell"); UIDropDownMenu_AddButton(info)
+            info.text, info.value, info.checked = "成品", "item", (f.addType == "item"); UIDropDownMenu_AddButton(info)
+            info.text, info.value, info.checked = "配方名", "name", (f.addType == "name"); UIDropDownMenu_AddButton(info)
+        end)
+        UIDropDownMenu_SetSelectedValue(typeDropdown, "spell")
+        if UIDropDownMenu_SetSelectedName then UIDropDownMenu_SetSelectedName(typeDropdown, "法术") end
+        f.typeDropdown = typeDropdown
+        f.typeNames = typeNames
 
         local addRow = CreateFrame("Frame", nil, f)
         addRow:SetSize(320, 24)
@@ -1185,11 +1207,11 @@ function L.ShowCooldownWhitelistDetail()
         f.closeBtn = closeBtn
     end
 
-    if f.typeBtns then
+    if f.typeDropdown and UIDropDownMenu_SetSelectedValue then
         local cur = f.addType or "spell"
-        f.typeBtns.spell:SetText(cur == "spell" and "[法术]" or "法术")
-        f.typeBtns.item:SetText(cur == "item" and "[成品]" or "成品")
-        f.typeBtns.name:SetText(cur == "name" and "[配方名]" or "配方名")
+        UIDropDownMenu_SetSelectedValue(f.typeDropdown, cur)
+        if UIDropDownMenu_SetSelectedName and f.typeNames then UIDropDownMenu_SetSelectedName(f.typeDropdown, f.typeNames[cur]) end
+        UIDropDownMenu_Refresh(f.typeDropdown)
     end
 
     local content = f.scrollContent
@@ -2109,17 +2131,22 @@ function L.ShowFragmentDump()
     f:Show()
 end
 
-if IsAddOnLoaded("Blizzard_TradeSkillUI") then
-    CreateTradeSkillButton()
-else
-    local initFrame = CreateFrame("Frame")
-    initFrame:RegisterEvent("ADDON_LOADED")
-    initFrame:SetScript("OnEvent", function(self, event, addonName)
-        if addonName == "Blizzard_TradeSkillUI" then
-            CreateTradeSkillButton()
-            self:UnregisterEvent("ADDON_LOADED")
-        end
-    end)
+local ok_ui, err_ui = pcall(function()
+    if IsAddOnLoaded("Blizzard_TradeSkillUI") then
+        CreateTradeSkillButton()
+    else
+        local initFrame = CreateFrame("Frame")
+        initFrame:RegisterEvent("ADDON_LOADED")
+        initFrame:SetScript("OnEvent", function(self, event, addonName)
+            if addonName == "Blizzard_TradeSkillUI" then
+                CreateTradeSkillButton()
+                self:UnregisterEvent("ADDON_LOADED")
+            end
+        end)
+    end
+end)
+if not ok_ui and err_ui then
+    (L and L.Print or print)("|cffff0000[PLH UI.lua 加载时报错]|r " .. tostring(err_ui))
 end
 
 -- Scan button on Auction House frame (above the AH window) so user can scan without opening options.
@@ -2143,9 +2170,12 @@ do
     local ahFrame = CreateFrame("Frame")
     ahFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
     ahFrame:SetScript("OnEvent", function()
-        CreateAHScanButton()
-        if L.AHScanButtonOnAH and L.UpdateScanButtonState then
-            L.UpdateScanButtonState()
-        end
+        local ok, err = pcall(function()
+            CreateAHScanButton()
+            if L.AHScanButtonOnAH and L.UpdateScanButtonState then
+                L.UpdateScanButtonState()
+            end
+        end)
+        if not ok and err then (L and L.Print or print)("|cffff0000[PLH AUCTION_HOUSE_SHOW]|r " .. tostring(err)) end
     end)
 end

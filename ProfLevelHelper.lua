@@ -99,55 +99,72 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("MERCHANT_SHOW")
 frame:SetScript("OnEvent", function(_, event, arg1)
+    local ok, err
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-        InitDB()
+        ok, err = pcall(InitDB)
     elseif event == "MERCHANT_SHOW" then
-        L.OnMerchantShow()
+        ok, err = pcall(L.OnMerchantShow)
+    end
+    if ok == false and err then
+        L.Print("|cffff0000[PLH Error]|r " .. tostring(err))
     end
 end)
 
 SlashCmdList["PROFLEVELHELPER"] = function(msg)
-    msg = msg and strtrim(msg):lower() or ""
-    if msg == "scan" or msg == "ah" then
-        L.ScanAH()
-    elseif msg == "list" or msg == "show" then
-        L.ShowResultList()
-    elseif msg == "recordfragment" or msg == "fragment" then
-        if L.RecordFragmentCosts then L.RecordFragmentCosts() end
-    elseif msg == "dumpfragment" then
-        if L.ShowFragmentDump then L.ShowFragmentDump() end
-    elseif msg == "recordvendor" or msg == "vendor" then
-        local n = (ProfLevelHelper and ProfLevelHelper.RecordVendorPrices and ProfLevelHelper.RecordVendorPrices()) or 0
-        L.Print(string.format("已记录当前商人售价（仅金币）: %d 种物品。使用 /plh dumpvendor 导出为 Lua 保存到 VendorPrices.lua。", n))
-    elseif msg == "dumpvendor" then
-        if L.ShowVendorDump then L.ShowVendorDump() end
-    elseif msg == "options" or msg == "config" then
-        L.OpenOptions()
-    elseif msg == "debug" then
-        L.PrintDebugInfo()
-    elseif msg == "testlearn" then
-        if L.TestRecipeLearnLevels then L.TestRecipeLearnLevels() end
-    elseif msg == "testcost" or msg:match("^testcost ") then
-        local skill = msg:match("^testcost%s+(%d+)")
-        if not L.TestCostAtSkill then
-            L.Print("testcost 未加载，请确认已打开专业技能窗口后重载界面 /reload")
+    local ok, err = pcall(function()
+        msg = msg and strtrim(msg):lower() or ""
+        if msg == "scan" or msg == "ah" then
+            L.ScanAH()
+        elseif msg == "list" or msg == "show" then
+            if not L.ShowResultList then
+                L.Print("|cffff0000ShowResultList 未加载，UI.lua 可能加载失败。请 /reload 并留意重载时是否有红色报错。|r")
+                return
+            end
+            L.ShowResultList()
+        elseif msg == "recordfragment" or msg == "fragment" then
+            if L.RecordFragmentCosts then L.RecordFragmentCosts() end
+        elseif msg == "dumpfragment" then
+            if L.ShowFragmentDump then L.ShowFragmentDump() end
+        elseif msg == "recordvendor" or msg == "vendor" then
+            local n = (ProfLevelHelper and ProfLevelHelper.RecordVendorPrices and ProfLevelHelper.RecordVendorPrices()) or 0
+            L.Print(string.format("已记录当前商人售价（仅金币）: %d 种物品。使用 /plh dumpvendor 导出为 Lua 保存到 VendorPrices.lua。", n))
+        elseif msg == "dumpvendor" then
+            if L.ShowVendorDump then L.ShowVendorDump() end
+        elseif msg == "options" or msg == "config" then
+            if not L.OpenOptions then
+                L.Print("|cffff0000OpenOptions 未加载，UI.lua 可能加载失败。请 /reload 并留意重载时是否有红色报错。|r")
+                return
+            end
+            L.OpenOptions()
+        elseif msg == "debug" then
+            L.PrintDebugInfo()
+        elseif msg == "testlearn" then
+            if L.TestRecipeLearnLevels then L.TestRecipeLearnLevels() end
+        elseif msg == "testcost" or msg:match("^testcost ") then
+            local skill = msg:match("^testcost%s+(%d+)")
+            if not L.TestCostAtSkill then
+                L.Print("testcost 未加载，请确认已打开专业技能窗口后重载界面 /reload")
+            else
+                L.Print("正在执行 testcost，等级: " .. (skill or "175"))
+                local ok2, err2 = pcall(function() L.TestCostAtSkill(skill) end)
+                if not ok2 then L.Print("testcost 报错: " .. tostring(err2)) end
+            end
         else
-            L.Print("正在执行 testcost，等级: " .. (skill or "175"))
-            local ok, err = pcall(function() L.TestCostAtSkill(skill) end)
-            if not ok then L.Print("testcost 报错: " .. tostring(err)) end
+            L.Print("Usage: /plh scan | list | options | debug | testlearn | testcost [等级]")
+            L.Print("  scan    - 扫描拍卖行")
+            L.Print("  list    - 显示推荐冲级列表")
+            L.Print("  options - 打开设置界面")
+            L.Print("  debug   - 打印调试信息（故障排查用）")
+            L.Print("  testlearn - 检测配方学习等级来源(ala vs 本插件)，需先打开专业窗口")
+            L.Print("  testcost [等级] - 在指定等级打印各配方单次/升1级成本，默认175")
+            L.Print("  dumpala [法术ID] - 打印 ala 对该法术的 get_info_by_sid 完整返回（默认 28028=虚空之球）")
+            L.Print("  recordvendor - 打开商人窗口后执行，记录当前商人售价")
+            L.Print("  dumpvendor - 将已记录的商人售价导出为 Lua，复制保存为 VendorPrices.lua")
+            L.Print("Feedback: ptrees@126.com")
         end
-    else
-        L.Print("Usage: /plh scan | list | options | debug | testlearn | testcost [等级]")
-        L.Print("  scan    - 扫描拍卖行")
-        L.Print("  list    - 显示推荐冲级列表")
-        L.Print("  options - 打开设置界面")
-        L.Print("  debug   - 打印调试信息（故障排查用）")
-        L.Print("  testlearn - 检测配方学习等级来源(ala vs 本插件)，需先打开专业窗口")
-        L.Print("  testcost [等级] - 在指定等级打印各配方单次/升1级成本，默认175")
-        L.Print("  dumpala [法术ID] - 打印 ala 对该法术的 get_info_by_sid 完整返回（默认 28028=虚空之球）")
-        L.Print("  recordvendor - 打开商人窗口后执行，记录当前商人售价")
-        L.Print("  dumpvendor - 将已记录的商人售价导出为 Lua，复制保存为 VendorPrices.lua")
-        L.Print("Feedback: ptrees@126.com")
+    end)
+    if not ok and err then
+        L.Print("|cffff0000[PLH Error]|r " .. tostring(err))
     end
 end
 

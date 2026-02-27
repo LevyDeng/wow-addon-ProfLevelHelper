@@ -18,6 +18,13 @@
     "StaticPopupDialogs",
     "StaticPopup_Show",
     "SlashCmdList",
-    "DEFAULT_CHAT_FRAME"
+    "DEFAULT_CHAT_FRAME",
+    "UIDropDownMenu_SetWidth",
+    "UIDropDownMenu_Initialize",
+    "UIDropDownMenu_SetSelectedValue",
+    "UIDropDownMenu_AddButton",
+    "UIDropDownMenu_CreateInfo",
+    "UIDropDownMenu_Refresh",
+    "UIDropDownMenu_SetSelectedName"
   ]
 }
