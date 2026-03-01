@@ -792,20 +792,277 @@ function L.GetMarginalCostWithRP(itemID, qty, rpInfo)
     return totalCost / qty
 end
 
+-- Build prefix cost array for one item from AHPriceCurve: prefixCost[n] = total copper to buy first n units.
+-- Used by greedy tiered optimizer for global marginal cost.
+function L.BuildPrefixCost(itemID)
+    local db = ProfLevelHelperDB
+    if not db or not itemID then return nil end
+    -- Vendor items use fixed price; no prefix array needed (GetAHMarginalCost handles them).
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then return nil end
+    local curve = db.AHPriceCurve and db.AHPriceCurve[itemID]
+    if not curve or #curve == 0 then return nil end
+    local prefix = {}
+    local total = 0
+    local index = 1
+    for _, tier in ipairs(curve) do
+        local tierQty, tierPrice = tier[1], tier[2]
+        for _ = 1, tierQty do
+            total = total + tierPrice
+            prefix[index] = total
+            index = index + 1
+        end
+    end
+    return prefix
+end
+
+-- Marginal cost to buy `qty` more units of itemID when `used` have already been consumed (copper).
+-- Uses prefixCostTable[itemID] when available; else fixed unit price from vendor/AH.
+function L.GetAHMarginalCost(itemID, qty, used, prefixCostTable)
+    if not itemID or not qty or qty <= 0 then return 0 end
+    local db = ProfLevelHelperDB
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then
+        return (vp[itemID] or 0) * qty
+    end
+    local prefix = prefixCostTable and prefixCostTable[itemID]
+    if prefix then
+        local costBefore = (used > 0 and used <= #prefix) and prefix[used] or 0
+        if used > #prefix then
+            local lastPrice = prefix[#prefix] - (prefix[#prefix - 1] or 0)
+            costBefore = prefix[#prefix] + (used - #prefix) * lastPrice
+        end
+        local after = used + qty
+        local costAfter
+        if after <= #prefix then
+            costAfter = prefix[after]
+        else
+            local lastPrice = #prefix > 0 and (prefix[#prefix] - (prefix[#prefix - 1] or 0)) or (L.GetItemPrice(itemID) or 0)
+            costAfter = (prefix[#prefix] or 0) + (after - #prefix) * lastPrice
+        end
+        return costAfter - costBefore
+    end
+    return (L.GetItemPrice(itemID) or 0) * qty
+end
+
+-- Total cost to buy first n units (for segment cost from usedStart to usedEnd). Returns copper.
+function L.GetPrefixCostTotal(itemID, n, prefixCostTable)
+    if not itemID or not n or n <= 0 then return 0 end
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then
+        return vp[itemID] * n
+    end
+    local prefix = prefixCostTable and prefixCostTable[itemID]
+    if prefix then
+        if n <= #prefix then return prefix[n] end
+        local lastPrice = #prefix > 0 and (prefix[#prefix] - (prefix[#prefix - 1] or 0)) or (L.GetItemPrice(itemID) or 0)
+        return prefix[#prefix] + (n - #prefix) * lastPrice
+    end
+    return (L.GetItemPrice(itemID) or 0) * n
+end
+
+-- Build map createdItemID -> { recipes that produce it } for craft-chain marginal cost.
+function L.BuildRecipesProducing(recipes, nameToID)
+    local out = {}
+    for _, rec in ipairs(recipes or {}) do
+        if rec.createdItemID and rec.numMade and rec.numMade > 0 then
+            local id = rec.createdItemID
+            if not out[id] then out[id] = {} end
+            out[id][#out[id] + 1] = rec
+        end
+    end
+    return out
+end
+
+-- Marginal cost to get `qty` units of item: min(buy from AH/vendor, craft from recipes). Copper.
+-- visited prevents infinite recursion on craft cycles.
+function L.GetItemMarginalCost(itemID, qty, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+    visited = visited or {}
+    if visited[itemID] then return math.huge end
+    local used = (materialUsed and materialUsed[itemID]) or 0
+    local buyCost = L.GetAHMarginalCost(itemID, qty, used, prefixCostTable)
+    local recipes = recipesProducing and recipesProducing[itemID]
+    if not recipes or #recipes == 0 then return buyCost end
+    visited[itemID] = true
+    local bestCraft = math.huge
+    for _, rec in ipairs(recipes) do
+        local numMade = rec.numMade or 1
+        local times = math.ceil(qty / numMade)
+        local cost = 0
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+            if id then
+                local c = L.GetItemMarginalCost(id, (r.count or 0) * times, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+                cost = cost + c
+            else
+                cost = math.huge
+                break
+            end
+        end
+        if cost < bestCraft then bestCraft = cost end
+    end
+    visited[itemID] = nil
+    return math.min(buyCost, bestCraft)
+end
+
+-- Marginal cost for one craft of recipe (materials only), using global materialUsed and prefixCost.
+function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID)
+    local cost = 0
+    for _, r in ipairs(recipe.reagents or {}) do
+        local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+        if id then
+            cost = cost + L.GetItemMarginalCost(id, r.count or 0, materialUsed, prefixCostTable, recipesProducing, nameToID, {})
+        else
+            return math.huge
+        end
+    end
+    return cost
+end
+
+-- Greedy tiered optimizer: global materialUsed + learnCost on first use. Returns (route, totalCost) in same format as DP.
+function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName)
+    if not filteredRecipes or #filteredRecipes == 0 then return nil, 0 end
+    local materialUsed = {}
+    local learnedRecipes = {}
+    local currentSkill = targetStart + 0.0
+    local steps = {}
+    local maxSteps = 100000
+    local stepCount = 0
+
+    while currentSkill < targetEnd and stepCount < maxSteps do
+        stepCount = stepCount + 1
+        local bestRec, bestCostPerSkill, bestChance
+        for _, rec in ipairs(filteredRecipes) do
+            local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name])
+                and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
+            local yellow, gray = rec.yellow, rec.grey
+            if not yellow or not gray then
+                yellow, gray = L.GetRecipeThresholds(rec.name, profName or "", learnSkill)
+            end
+            if currentSkill >= learnSkill and currentSkill < gray then
+                local chance = L.CalcSkillUpChance(gray, yellow, currentSkill)
+                if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
+                    if     rec.skillType == "optimal" then chance = 1
+                    elseif rec.skillType == "easy"    then chance = 0.6
+                    elseif rec.skillType == "medium"  then chance = 0.3
+                    else chance = 0
+                    end
+                end
+                if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
+                if chance > 0 then
+                    local learnCost = (not learnedRecipes[rec.name] and not rec.isKnown) and (rec.acqCost or 0) or 0
+                    local craftCost = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID)
+                    local totalCost = learnCost + craftCost
+                    local costPerSkill = totalCost / chance
+                    if not bestRec or costPerSkill < bestCostPerSkill then
+                        bestRec, bestCostPerSkill, bestChance = rec, costPerSkill, chance
+                    end
+                end
+            end
+        end
+        if not bestRec then break end
+
+        local rec = bestRec
+        if not learnedRecipes[rec.name] then
+            learnedRecipes[rec.name] = true
+        end
+        local materialUsedBefore = {}
+        for k, v in pairs(materialUsed) do materialUsedBefore[k] = v end
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+            if id then
+                materialUsed[id] = (materialUsed[id] or 0) + (r.count or 0)
+            end
+        end
+        local skillBefore = currentSkill
+        currentSkill = currentSkill + bestChance
+        steps[#steps + 1] = {
+            recipe = rec,
+            skillBefore = skillBefore,
+            skillAfter = currentSkill,
+            crafts = 1,
+            materialUsedBefore = materialUsedBefore,
+        }
+    end
+
+    if #steps == 0 then return nil, 0 end
+
+    -- Consolidate consecutive same recipe into segments.
+    local consolidatedRoute = {}
+    local seenRecipesForAcq = {}
+    local i = 1
+    while i <= #steps do
+        local segStart = i
+        local rec = steps[i].recipe
+        while i <= #steps and steps[i].recipe.name == rec.name do i = i + 1 end
+        local segEnd = i - 1
+        local totalCrafts = segEnd - segStart + 1
+        local firstStep = steps[segStart]
+        local lastStep = steps[segEnd]
+        local usedStart = firstStep.materialUsedBefore
+        local totalMatCost = 0
+        local materialDetails = {}
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+            if id then
+                local qty = totalCrafts * (r.count or 0)
+                local uStart = usedStart[id] or 0
+                local uEnd = uStart + qty
+                local costHere = L.GetPrefixCostTotal(id, uEnd, prefixCostTable) - L.GetPrefixCostTotal(id, uStart, prefixCostTable)
+                totalMatCost = totalMatCost + costHere
+                materialDetails[#materialDetails + 1] = {
+                    itemID = id,
+                    qty = qty,
+                    unitPrice = qty > 0 and (costHere / qty) or 0,
+                }
+            end
+        end
+        local recCostOnce = 0
+        if not seenRecipesForAcq[rec.name] and not rec.isKnown and (rec.acqCost or 0) > 0 then
+            recCostOnce = rec.acqCost or 0
+            seenRecipesForAcq[rec.name] = true
+        end
+        local useAH = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
+        local bestSb = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
+        local numMade = rec.numMade or 1
+        local totalSV = (rec.sellPricePerItem or 0) * numMade * totalCrafts
+        local totalSA = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * totalCrafts
+        local sellBack = (bestSb and bestSb > 0) and (bestSb * numMade * totalCrafts) or (useAH and totalSA or totalSV)
+        local t = math.floor(firstStep.skillBefore + 0.5)
+        local e = math.floor(lastStep.skillAfter + 0.5)
+        if e <= t then e = t + 1 end
+        table.insert(consolidatedRoute, {
+            startSkill          = t,
+            endSkill            = e,
+            recipe              = rec,
+            totalCrafts         = totalCrafts,
+            totalMatCost        = totalMatCost,
+            totalSellBackVendor = totalSV,
+            totalSellBackAH     = totalSA,
+            totalRecCost        = recCostOnce,
+            recSource           = rec.acqSource or "",
+            segmentTotalCost    = recCostOnce + totalMatCost - sellBack,
+            materialDetails     = materialDetails,
+        })
+    end
+
+    local totalCost = 0
+    for _, seg in ipairs(consolidatedRoute) do
+        totalCost = totalCost + (seg.segmentTotalCost or 0)
+    end
+    return consolidatedRoute, totalCost
+end
+
 -- Calculate global cheapest route using Dynamic Programming (Shortest Path).
 --
--- When db.UseTieredPricing is active:
---   The prefix-sum for each recipe is built with PER-SKILL-LEVEL material costs.
---   At skill level l the material cost uses GetTierPriceAtCumQty(id, cumEC * count),
---   where cumEC = expected crafts accumulated from the recipe's validStart up to l.
---   This means the DP naturally sees the real price escalation as a recipe consumes
---   more and more of the cheap AH stock; the optimizer can split a recipe segment
---   exactly where a different recipe becomes cheaper.
+-- When db.UseTieredPricing is active we use the greedy tiered optimizer instead of DP:
+--   Global materialUsed tracks total consumption per material so "materials get more
+--   expensive the more you buy" is applied across the whole route. Recipe learn cost
+--   is paid once on first use (learnedRecipes). PrefixCost gives marginal AH cost.
 --
---   Additionally, up to TieredPricingMaxRounds iterative passes are run, each time
---   recomputing effectiveCost from the previous route's material totals. This helps
---   craft-chain items (where a sub-crafted material's cost changes based on route)
---   converge to better prices. Stops early when total cost no longer improves.
+-- When UseTieredPricing is off, DP runs with per-recipe prefix sums. Up to
+-- TieredPricingMaxRounds refinement passes then recompute effectiveCost from the
+-- route's material totals for craft-chain pricing. Stops when total cost no longer improves.
 function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     local allRecipes, profName, currentSkill, pMaxSkill = L.GetRecipeList(includeHoliday)
     if not allRecipes or #allRecipes == 0 then return nil, profName, currentSkill, currentSkill, 0 end
@@ -833,12 +1090,8 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         return L.GetTierPriceAtCumQtyWithRP(id, cumUnits, currentRPInfo)
     end
 
-    -- -----------------------------------------------------------------------
-    -- Inner function: filter allRecipes with given effectiveCost, run the
-    -- Segment-DP, reconstruct and return (route, totalCost) or (nil, 0).
-    -- -----------------------------------------------------------------------
-    local function runDP(effectiveCost)
-        -- Pre-calculate per-recipe costs and apply source / price filters.
+    -- Filter allRecipes by source, price, blacklist, etc. Returns filtered list and sets rec.matCost, rec.acqCost, etc.
+    local function filterRecipes(effectiveCost)
         local filteredRecipes = {}
         for _, rec in ipairs(allRecipes) do
             rec.matCost = L.CraftCostWithEffective(rec.reagents, effectiveCost)
@@ -927,6 +1180,14 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             end
             if allowed then filteredRecipes[#filteredRecipes + 1] = rec end
         end
+        return filteredRecipes
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Inner function: run Segment-DP, reconstruct and return (route, totalCost) or (nil, 0).
+    -- -----------------------------------------------------------------------
+    local function runDP(effectiveCost)
+        local filteredRecipes = filterRecipes(effectiveCost)
         L.Print("过滤后可用配方数量: " .. #filteredRecipes)
 
         -- ===== Segment DP with prefix sums =====
@@ -1097,6 +1358,24 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
 
     -- Round 1: standard benchmark prices, no route-produced info yet.
     local effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
+
+    -- When tiered pricing is on, use greedy optimizer (global materialUsed + learnCost on first use).
+    if useTieredPricing then
+        local filteredRecipes = filterRecipes(effectiveCost)
+        L.Print("过滤后可用配方数量: " .. #filteredRecipes)
+        local prefixCostTable = {}
+        for id in pairs(db.AHPriceCurve or {}) do
+            local pc = L.BuildPrefixCost(id)
+            if pc then prefixCostTable[id] = pc end
+        end
+        local recipesProducing = L.BuildRecipesProducing(filteredRecipes, nameToID)
+        local route, totalCost = L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName)
+        if route then
+            L.Print("阶梯价格贪心路线计算完成。")
+            return route, profName, targetStart, targetEnd, totalCost
+        end
+    end
+
     local route, totalCost = runDP(effectiveCost)
 
     -- Refinement loop: iteratively refine costs using both tiered AH pricing and
