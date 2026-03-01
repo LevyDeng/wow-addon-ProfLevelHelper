@@ -10,12 +10,20 @@ local EFF_COST_UNKNOWN = 999999999
 local AH_TAX_FACTOR = 0.95
 
 -- Skill-up chance: (G - X) / (G - Y), clamp to [0, 1]. Orange = 1, Gray = 0.
+-- Uses full double precision (no rounding). Coerces inputs to number so string data does not break.
 function L.CalcSkillUpChance(graySkill, yellowSkill, playerSkill)
-    if not graySkill or not yellowSkill or playerSkill == nil then return 0 end
-    if playerSkill >= graySkill then return 0 end
-    if playerSkill < yellowSkill then return 1 end
-    if graySkill <= yellowSkill then return 1 end
-    local chance = (graySkill - playerSkill) / (graySkill - yellowSkill)
+    local G = tonumber(graySkill)
+    local Y = tonumber(yellowSkill)
+    local X = tonumber(playerSkill)
+    if not G or not Y or X == nil then return 0 end
+    if X >= G then return 0 end
+    if X < Y then return 1 end
+    if G <= Y then return 1 end
+    local denom = G - Y
+    if denom <= 0 then return 1 end
+    -- If denom is unreasonably large (bad data), cap to avoid microscopic chance and 99k+ crafts.
+    if denom > 500 then denom = 500 end
+    local chance = (G - X) / denom
     return math.max(0, math.min(1, chance))
 end
 
@@ -954,11 +962,12 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
     local titanShardsUsed = 0
     local materialUsed = {}
     local learnedRecipes = {}
-    local currentSkill = targetStart + 0.0
+    -- Skill is integer: each iteration gains exactly 1 point; crafts = ceil(1/chance) for that point.
+    local currentSkill = math.floor(targetStart + 0.5)
+    if currentSkill < targetStart then currentSkill = targetStart end
     local steps = {}
-    local maxSteps = 100000
+    local maxSteps = 500 * math.max(1, targetEnd - targetStart)
     local stepCount = 0
-
     while currentSkill < targetEnd and stepCount < maxSteps do
         stepCount = stepCount + 1
         local bestRec, bestCostPerSkill, bestChance, bestCraftCost, bestCraftShards
@@ -994,7 +1003,10 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         if not bestRec then break end
 
         local rec = bestRec
-        titanShardsUsed = titanShardsUsed + (bestCraftShards or 0)
+        local crafts = math.max(1, math.ceil(1 / (bestChance or 1)))
+        local skillBefore = currentSkill
+        currentSkill = currentSkill + 1
+        titanShardsUsed = titanShardsUsed + (bestCraftShards or 0) * crafts
         if not learnedRecipes[rec.name] then
             learnedRecipes[rec.name] = true
         end
@@ -1003,19 +1015,18 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         for _, r in ipairs(rec.reagents or {}) do
             local id = r.itemID or (r.name and nameToID and nameToID[r.name])
             if id then
-                materialUsed[id] = (materialUsed[id] or 0) + (r.count or 0)
+                materialUsed[id] = (materialUsed[id] or 0) + (r.count or 0) * crafts
             end
         end
-        local skillBefore = currentSkill
-        currentSkill = currentSkill + bestChance
         steps[#steps + 1] = {
             recipe = rec,
             skillBefore = skillBefore,
             skillAfter = currentSkill,
-            crafts = 1,
+            crafts = crafts,
             materialUsedBefore = materialUsedBefore,
-            craftCost = bestCraftCost or 0,
-            craftShards = bestCraftShards or 0,
+            craftCost = (bestCraftCost or 0) * crafts,
+            craftShards = (bestCraftShards or 0) * crafts,
+            chance = bestChance,
         }
     end
 
@@ -1030,7 +1041,8 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         local rec = steps[i].recipe
         while i <= #steps and steps[i].recipe.name == rec.name do i = i + 1 end
         local segEnd = i - 1
-        local totalCrafts = segEnd - segStart + 1
+        local totalCrafts = 0
+        for s = segStart, segEnd do totalCrafts = totalCrafts + (steps[s].crafts or 1) end
         local firstStep = steps[segStart]
         local lastStep = steps[segEnd]
         local usedStart = firstStep.materialUsedBefore
