@@ -845,6 +845,23 @@ function L.GetAHMarginalCost(itemID, qty, used, prefixCostTable)
     return (L.GetItemPrice(itemID) or 0) * qty
 end
 
+-- Titan fragment marginal cost: cost (copper) and shardsUsed when buying qty units.
+-- titanShardsTotal nil = unlimited. Shadow price from db.FragmentValueInCopper.
+function L.GetTitanMarginalCost(itemID, qty, titanShardsUsed, titanShardsTotal)
+    if not itemID or not qty or qty <= 0 then return math.huge, 0 end
+    local db = ProfLevelHelperDB
+    if not db or not db.FragmentCosts or not db.FragmentCosts[itemID] or (db.FragmentValueInCopper or 0) <= 0 then
+        return math.huge, 0
+    end
+    local shardsPerUnit = db.FragmentCosts[itemID]
+    local shardsNeeded = shardsPerUnit * qty
+    local shardsLeft = (titanShardsTotal == nil or titanShardsTotal < 0) and math.huge or math.max(0, titanShardsTotal - (titanShardsUsed or 0))
+    if shardsNeeded > shardsLeft then
+        return math.huge, 0
+    end
+    return shardsNeeded * db.FragmentValueInCopper, shardsNeeded
+end
+
 -- Total cost to buy first n units (for segment cost from usedStart to usedEnd). Returns copper.
 function L.GetPrefixCostTotal(itemID, n, prefixCostTable)
     if not itemID or not n or n <= 0 then return 0 end
@@ -874,54 +891,67 @@ function L.BuildRecipesProducing(recipes, nameToID)
     return out
 end
 
--- Marginal cost to get `qty` units of item: min(buy from AH/vendor, craft from recipes). Copper.
--- visited prevents infinite recursion on craft cycles.
-function L.GetItemMarginalCost(itemID, qty, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+-- Marginal cost to get `qty` units of item: min(AH, craft, Titan). Returns cost (copper), shardsUsed.
+-- titanShardsUsed/titanShardsTotal: when set, Titan is an option and we record shards used by chosen source.
+function L.GetItemMarginalCost(itemID, qty, materialUsed, prefixCostTable, recipesProducing, nameToID, visited, titanShardsUsed, titanShardsTotal)
     visited = visited or {}
-    if visited[itemID] then return math.huge end
+    if visited[itemID] then return math.huge, 0 end
     local used = (materialUsed and materialUsed[itemID]) or 0
     local buyCost = L.GetAHMarginalCost(itemID, qty, used, prefixCostTable)
+    local titanCost, titanShards = L.GetTitanMarginalCost(itemID, qty, titanShardsUsed, titanShardsTotal)
     local recipes = recipesProducing and recipesProducing[itemID]
-    if not recipes or #recipes == 0 then return buyCost end
+    if not recipes or #recipes == 0 then
+        if buyCost <= titanCost then return buyCost, 0 end
+        return titanCost, titanShards
+    end
     visited[itemID] = true
-    local bestCraft = math.huge
+    local bestCraft, bestCraftShards = math.huge, 0
     for _, rec in ipairs(recipes) do
         local numMade = rec.numMade or 1
         local times = math.ceil(qty / numMade)
-        local cost = 0
+        local cost, shards = 0, 0
         for _, r in ipairs(rec.reagents or {}) do
             local id = r.itemID or (r.name and nameToID and nameToID[r.name])
             if id then
-                local c = L.GetItemMarginalCost(id, (r.count or 0) * times, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
-                cost = cost + c
+                local c, s = L.GetItemMarginalCost(id, (r.count or 0) * times, materialUsed, prefixCostTable, recipesProducing, nameToID, visited, titanShardsUsed, titanShardsTotal)
+                cost, shards = cost + c, shards + s
             else
-                cost = math.huge
+                cost, shards = math.huge, 0
                 break
             end
         end
-        if cost < bestCraft then bestCraft = cost end
+        if cost < bestCraft then bestCraft, bestCraftShards = cost, shards end
     end
     visited[itemID] = nil
-    return math.min(buyCost, bestCraft)
+    local bestCost = math.min(buyCost, titanCost, bestCraft)
+    local bestShards = 0
+    if bestCost == buyCost then bestShards = 0
+    elseif bestCost == titanCost then bestShards = titanShards
+    else bestShards = bestCraftShards
+    end
+    return bestCost, bestShards
 end
 
--- Marginal cost for one craft of recipe (materials only), using global materialUsed and prefixCost.
-function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID)
-    local cost = 0
+-- Marginal cost for one craft of recipe (materials only). Returns cost (copper), shardsUsed.
+function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal)
+    local cost, shards = 0, 0
     for _, r in ipairs(recipe.reagents or {}) do
         local id = r.itemID or (r.name and nameToID and nameToID[r.name])
         if id then
-            cost = cost + L.GetItemMarginalCost(id, r.count or 0, materialUsed, prefixCostTable, recipesProducing, nameToID, {})
+            local c, s = L.GetItemMarginalCost(id, r.count or 0, materialUsed, prefixCostTable, recipesProducing, nameToID, {}, titanShardsUsed, titanShardsTotal)
+            cost, shards = cost + c, shards + s
         else
-            return math.huge
+            return math.huge, 0
         end
     end
-    return cost
+    return cost, shards
 end
 
 -- Greedy tiered optimizer: global materialUsed + learnCost on first use. Returns (route, totalCost) in same format as DP.
 function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName)
     if not filteredRecipes or #filteredRecipes == 0 then return nil, 0 end
+    local titanShardsTotal = (type(db.AvailableTitanFragments) == "number" and db.AvailableTitanFragments >= 0) and db.AvailableTitanFragments or nil
+    local titanShardsUsed = 0
     local materialUsed = {}
     local learnedRecipes = {}
     local currentSkill = targetStart + 0.0
@@ -931,7 +961,7 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
 
     while currentSkill < targetEnd and stepCount < maxSteps do
         stepCount = stepCount + 1
-        local bestRec, bestCostPerSkill, bestChance
+        local bestRec, bestCostPerSkill, bestChance, bestCraftCost, bestCraftShards
         for _, rec in ipairs(filteredRecipes) do
             local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name])
                 and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
@@ -951,11 +981,12 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
                 if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
                 if chance > 0 then
                     local learnCost = (not learnedRecipes[rec.name] and not rec.isKnown) and (rec.acqCost or 0) or 0
-                    local craftCost = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID)
+                    local craftCost, craftShards = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal)
                     local totalCost = learnCost + craftCost
                     local costPerSkill = totalCost / chance
                     if not bestRec or costPerSkill < bestCostPerSkill then
                         bestRec, bestCostPerSkill, bestChance = rec, costPerSkill, chance
+                        bestCraftCost, bestCraftShards = craftCost, craftShards
                     end
                 end
             end
@@ -963,6 +994,7 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         if not bestRec then break end
 
         local rec = bestRec
+        titanShardsUsed = titanShardsUsed + (bestCraftShards or 0)
         if not learnedRecipes[rec.name] then
             learnedRecipes[rec.name] = true
         end
@@ -982,6 +1014,8 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
             skillAfter = currentSkill,
             crafts = 1,
             materialUsedBefore = materialUsedBefore,
+            craftCost = bestCraftCost or 0,
+            craftShards = bestCraftShards or 0,
         }
     end
 
@@ -1001,19 +1035,18 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         local lastStep = steps[segEnd]
         local usedStart = firstStep.materialUsedBefore
         local totalMatCost = 0
+        for s = segStart, segEnd do
+            totalMatCost = totalMatCost + (steps[s].craftCost or 0)
+        end
         local materialDetails = {}
         for _, r in ipairs(rec.reagents or {}) do
             local id = r.itemID or (r.name and nameToID and nameToID[r.name])
             if id then
                 local qty = totalCrafts * (r.count or 0)
-                local uStart = usedStart[id] or 0
-                local uEnd = uStart + qty
-                local costHere = L.GetPrefixCostTotal(id, uEnd, prefixCostTable) - L.GetPrefixCostTotal(id, uStart, prefixCostTable)
-                totalMatCost = totalMatCost + costHere
                 materialDetails[#materialDetails + 1] = {
                     itemID = id,
                     qty = qty,
-                    unitPrice = qty > 0 and (costHere / qty) or 0,
+                    unitPrice = L.GetItemPrice(id) or 0,
                 }
             end
         end

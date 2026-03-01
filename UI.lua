@@ -389,9 +389,31 @@ function L.OpenOptions()
     end)
     f.fragValueBtn = fragValueBtn
 
+    -- Available Titan Fragments cap (empty = unlimited). Shadow price model: fragments as limited resource.
+    local fragCapLabel = f.fragCapLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    fragCapLabel:SetPoint("TOPLEFT", 24, -218)
+    fragCapLabel:SetText("可用泰坦碎片数量(空=不限):")
+    f.fragCapLabel = fragCapLabel
+    local fragCapInput = f.fragCapInput or CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    fragCapInput:SetSize(80, 20)
+    fragCapInput:SetPoint("LEFT", fragCapLabel, "RIGHT", 10, 0)
+    fragCapInput:SetAutoFocus(false)
+    fragCapInput:SetNumeric(true)
+    fragCapInput:SetText(ProfLevelHelperDB.AvailableTitanFragments and tostring(ProfLevelHelperDB.AvailableTitanFragments) or "")
+    fragCapInput:SetScript("OnTextChanged", function(self)
+        local val = tonumber(self:GetText())
+        if self:GetText():match("^%s*$") then
+            ProfLevelHelperDB.AvailableTitanFragments = nil
+        elseif val and val >= 0 then
+            ProfLevelHelperDB.AvailableTitanFragments = math.floor(val)
+        end
+        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+    end)
+    f.fragCapInput = fragCapInput
+
     -- Sell-back method: vendor or AH (affects net cost calculation)
     local sellBackLabel = f.sellBackLabel or content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    sellBackLabel:SetPoint("TOPLEFT", 24, -225)
+    sellBackLabel:SetPoint("TOPLEFT", 24, -243)
     sellBackLabel:SetText("回血方式:")
     f.sellBackLabel = sellBackLabel
     local cbVendor = f.cb_sellBackVendor or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
