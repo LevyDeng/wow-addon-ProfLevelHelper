@@ -1474,6 +1474,11 @@ function L.ShowResultList()
             str = str .. "|cffb87333" .. co .. "铜|r"
             return str
         end
+        local function CopperToGoldSigned(c)
+            if type(c) ~= "number" then return "0 铜" end
+            if c < 0 then return "-" .. CopperToGold(-c) end
+            return CopperToGold(c)
+        end
 
         f.ahTimeLabel:SetText("AH data updated: " .. L.FormatAHScanTime())
         local content = f.content
@@ -1519,7 +1524,7 @@ function L.ShowResultList()
             totalFragments = totalFragments + fragmentCount
         end
         local titleFragStr = totalFragments > 0 and (tostring(math.floor(totalFragments + 0.5)) .. " 碎片") or "0 碎片"
-        f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测 金钱: " .. CopperToGold(totalGold) .. "  碎片: " .. titleFragStr .. ")") or "推荐列表")
+        f.title:SetText(profName and (profName .. "路线 " .. actualStart .. " -> " .. actualEnd .. " (预测 金钱: " .. CopperToGoldSigned(totalGold) .. "  碎片: " .. titleFragStr .. ")") or "推荐列表")
 
         totalGold = 0
         totalFragments = 0
@@ -1656,7 +1661,7 @@ function L.ShowResultList()
             totalCostBeforeSellback = totalCostBeforeSellback + segTotalCost
             totalGold = totalGold + segGold
             totalFragments = totalFragments + fragmentCount
-            local goldStr = CopperToGold(segGold)
+            local goldStr = CopperToGoldSigned(segGold)
             local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. " 碎片") or "0 碎片"
 
             local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
@@ -1811,7 +1816,7 @@ function L.ShowResultList()
         sumLine:SetPoint("TOPLEFT", 0, -(y + 10))
         sumLine:SetJustifyH("LEFT")
         local totalFragStr = totalFragments > 0 and (tostring(math.floor(totalFragments + 0.5)) .. " 碎片") or "0 碎片"
-        sumLine:SetText("============\n总计 总成本: " .. CopperToGold(totalCostBeforeSellback) .. "  净成本: " .. CopperToGold(totalGold) .. "  碎片: " .. totalFragStr .. "\n============")
+        sumLine:SetText("============\n总计 总成本: " .. CopperToGold(totalCostBeforeSellback) .. "  净成本: " .. CopperToGoldSigned(totalGold) .. "  碎片: " .. totalFragStr .. "\n============")
         sumLine:Show()
 
         y = y + 80
@@ -1883,6 +1888,7 @@ function L.ShowExportFrame()
     local db = ProfLevelHelperDB
     local fragVal = (db and db.FragmentValueInCopper) and db.FragmentValueInCopper or 0
     local function c2s(c) local C = math.floor((c or 0) + 0.5); local g,s,co = math.floor(C/10000), math.floor((C%10000)/100), math.floor(C%100); return string.format("%d金%d银%d铜", g, s, co) end
+    local function c2sSigned(c) if type(c) ~= "number" then return "0金0银0铜" end; if c < 0 then return "-" .. c2s(-c) end; return c2s(c) end
 
     local producedQtyMap = {}
     for _, seg in ipairs(data.route) do
@@ -2025,7 +2031,7 @@ function L.ShowExportFrame()
                 deLineExport = deLabelExport .. " " .. table.concat(parts, ", ")
             end
         end
-        bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s %s:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s%s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), sellbackLabelExport, c2s(seg.totalSellBackAH), c2s(segGold), fragCostStr, acq, materialsLine, deLineExport)
+        bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s %s:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s%s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), sellbackLabelExport, c2s(seg.totalSellBackAH), c2sSigned(segGold), fragCostStr, acq, materialsLine, deLineExport)
     end
 
     local purchaseList = {}
@@ -2072,7 +2078,7 @@ function L.ShowExportFrame()
     end
 
     local totalFragStr = exportTotalFragments > 0 and (tostring(math.floor(exportTotalFragments + 0.5)) .. "碎片") or "0碎片"
-    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 总成本: %s  净成本: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalCost), c2s(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
+    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 总成本: %s  净成本: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalCost), c2sSigned(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
 
     f.editBox:SetText(txt)
     f.editBox:HighlightText()
