@@ -955,6 +955,87 @@ function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesP
     return cost, shards
 end
 
+-- Remove dominated options: if A.shardsUsed >= B.shardsUsed and A.cost >= B.cost then A is dominated.
+-- Sort by shardsUsed asc; keep only options where cost is strictly better than any option with less shards.
+function L.PruneDominatedOptions(options)
+    if not options or #options == 0 then return {} end
+    table.sort(options, function(a, b)
+        if a.shardsUsed ~= b.shardsUsed then return a.shardsUsed < b.shardsUsed end
+        return a.cost < b.cost
+    end)
+    local pruned = {}
+    local bestCostSoFar = math.huge
+    for _, opt in ipairs(options) do
+        if opt.cost < bestCostSoFar then
+            pruned[#pruned + 1] = opt
+            bestCostSoFar = opt.cost
+        end
+    end
+    return pruned
+end
+
+-- Return all (shardsUsed, cost) options to get qty units of item: AH, Titan, and craft combinations.
+-- visited prevents cycles when resolving craft chains. No fragment cap here (used for 2D DP options).
+function L.GetItemCostOptions(itemID, qty, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+    visited = visited or {}
+    if visited[itemID] then return {} end
+    local options = {}
+    local used = (materialUsed and materialUsed[itemID]) or 0
+    local ahCost = L.GetAHMarginalCost(itemID, qty, used, prefixCostTable)
+    if ahCost < math.huge then
+        options[#options + 1] = { shardsUsed = 0, cost = ahCost, fragmentQty = {} }
+    end
+    local db = ProfLevelHelperDB
+    if db and db.FragmentCosts and db.FragmentCosts[itemID] and (db.FragmentValueInCopper or 0) > 0 then
+        local shardsNeeded = db.FragmentCosts[itemID] * qty
+        local fq = {}; fq[itemID] = qty
+        options[#options + 1] = { shardsUsed = shardsNeeded, cost = shardsNeeded * db.FragmentValueInCopper, fragmentQty = fq }
+    end
+    local recipes = recipesProducing and recipesProducing[itemID]
+    if recipes and #recipes > 0 then
+        visited[itemID] = true
+        for _, rec in ipairs(recipes) do
+            local numMade = rec.numMade or 1
+            local times = math.ceil(qty / numMade)
+            local recOpts = L.GetRecipeCostOptions(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+            for _, opt in ipairs(recOpts) do
+                local fq = {}
+                for id, c in pairs(opt.fragmentQty or {}) do fq[id] = (fq[id] or 0) + c * times end
+                options[#options + 1] = { shardsUsed = opt.shardsUsed * times, cost = opt.cost * times, fragmentQty = fq }
+            end
+        end
+        visited[itemID] = nil
+    end
+    return L.PruneDominatedOptions(options)
+end
+
+-- Return all (shardsUsed, cost) options for one craft of recipe (materials only). Combine material options.
+function L.GetRecipeCostOptions(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+    local totalOptions = { { shardsUsed = 0, cost = 0, fragmentQty = {} } }
+    for _, r in ipairs(recipe.reagents or {}) do
+        local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+        if not id then return {} end
+        local matOpts = L.GetItemCostOptions(id, r.count or 0, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+        if #matOpts == 0 then return {} end
+        local newOptions = {}
+        for _, base in ipairs(totalOptions) do
+            for _, mat in ipairs(matOpts) do
+                local fq = {}
+                for iid, c in pairs(base.fragmentQty or {}) do fq[iid] = (fq[iid] or 0) + c end
+                for iid, c in pairs(mat.fragmentQty or {}) do fq[iid] = (fq[iid] or 0) + c end
+                newOptions[#newOptions + 1] = {
+                    shardsUsed = base.shardsUsed + mat.shardsUsed,
+                    cost = base.cost + mat.cost,
+                    fragmentQty = fq
+                }
+            end
+        end
+        totalOptions = L.PruneDominatedOptions(newOptions)
+        if #totalOptions == 0 then return {} end
+    end
+    return totalOptions
+end
+
 -- Greedy tiered optimizer: global materialUsed + learnCost on first use. Returns (route, totalCost) in same format as DP.
 function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName)
     if not filteredRecipes or #filteredRecipes == 0 then return nil, 0 end
@@ -991,6 +1072,12 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
                 if chance > 0 then
                     local learnCost = (not learnedRecipes[rec.name] and not rec.isKnown) and (rec.acqCost or 0) or 0
                     local craftCost, craftShards = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal)
+                    local craftsThisStep = math.ceil(1 / chance)
+                    -- Fragment limit: do not pick recipe if this step would exceed available fragments.
+                    if titanShardsTotal and (titanShardsUsed + (craftShards or 0) * craftsThisStep) > titanShardsTotal then
+                        craftCost = math.huge
+                        craftShards = 0
+                    end
                     local totalCost = learnCost + craftCost
                     local costPerSkill = totalCost / chance
                     if not bestRec or costPerSkill < bestCostPerSkill then
@@ -1047,8 +1134,10 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         local lastStep = steps[segEnd]
         local usedStart = firstStep.materialUsedBefore
         local totalMatCost = 0
+        local totalFragmentsSeg = 0
         for s = segStart, segEnd do
             totalMatCost = totalMatCost + (steps[s].craftCost or 0)
+            totalFragmentsSeg = totalFragmentsSeg + (steps[s].craftShards or 0)
         end
         local materialDetails = {}
         for _, r in ipairs(rec.reagents or {}) do
@@ -1088,9 +1177,177 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
             recSource           = rec.acqSource or "",
             segmentTotalCost    = recCostOnce + totalMatCost - sellBack,
             materialDetails     = materialDetails,
+            fragmentCount       = totalFragmentsSeg,
         })
     end
 
+    local totalCost = 0
+    for _, seg in ipairs(consolidatedRoute) do
+        totalCost = totalCost + (seg.segmentTotalCost or 0)
+    end
+    return consolidatedRoute, totalCost
+end
+
+-- 2D DP with (skill, shardsUsed) state so fragment limit is strictly enforced (per chatgpt3).
+-- Uses cost options (AH/craft/Titan combinations) and PruneDominatedOptions.
+-- materialUsed = {} when resolving options (tiered cost at start of curve).
+function L.Run2DTitanDP(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName, maxShards)
+    if not filteredRecipes or #filteredRecipes == 0 or not maxShards or maxShards < 0 then return nil, 0 end
+    local startSkill = math.floor(targetStart + 0.5)
+    if startSkill < targetStart then startSkill = targetStart end
+    local dp = {}
+    for s = startSkill, targetEnd do dp[s] = {} end
+    dp[startSkill][0] = { cost = 0, prev = nil }
+
+    for skill = startSkill, targetEnd - 1 do
+        for shardsUsed, state in pairs(dp[skill]) do
+            for _, rec in ipairs(filteredRecipes) do
+                local learnSkill = (db.RecipeLearnOverrides and db.RecipeLearnOverrides[rec.name])
+                    and db.RecipeLearnOverrides[rec.name] or rec.learn or 1
+                local yellow, gray = rec.yellow, rec.grey
+                if not yellow or not gray then
+                    yellow, gray = L.GetRecipeThresholds(rec.name, profName or "", learnSkill)
+                end
+                if skill < learnSkill or skill >= gray then
+                    -- skip
+                else
+                    local chance = L.CalcSkillUpChance(gray, yellow, skill)
+                    if chance <= 0 and rec.skillType and rec.skillType ~= "trivial" and rec.skillType ~= "difficult" then
+                        if     rec.skillType == "optimal" then chance = 1
+                        elseif rec.skillType == "easy"    then chance = 0.6
+                        elseif rec.skillType == "medium"  then chance = 0.3
+                        else chance = 0
+                        end
+                    end
+                    if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
+                    if chance > 0 then
+                        local crafts = math.max(1, math.ceil(1 / chance))
+                        local opts = L.GetRecipeCostOptions(rec, {}, prefixCostTable, recipesProducing, nameToID, {})
+                        for _, opt in ipairs(opts) do
+                            local totalShards = opt.shardsUsed * crafts
+                            local newShards = shardsUsed + totalShards
+                            if newShards <= maxShards then
+                                local totalCost = opt.cost * crafts
+                                local newCost = state.cost + totalCost
+                                local nextState = dp[skill + 1][newShards]
+                                if not nextState or newCost < nextState.cost then
+                                    dp[skill + 1][newShards] = {
+                                        cost = newCost,
+                                        prev = { fromSkill = skill, fromShards = shardsUsed, rec = rec, option = opt, crafts = crafts }
+                                    }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local bestCost = math.huge
+    local bestShards = nil
+    local endSkill = targetEnd
+    for shardsUsed, state in pairs(dp[targetEnd] or {}) do
+        if state.cost < bestCost then bestCost = state.cost; bestShards = shardsUsed end
+    end
+    -- If no state at targetEnd, return partial route to highest reachable skill.
+    if bestCost >= math.huge or not bestShards then
+        endSkill = startSkill
+        for s = targetEnd, startSkill, -1 do
+            if dp[s] and next(dp[s]) then
+                for shardsUsed, state in pairs(dp[s]) do
+                    if state.cost < bestCost then bestCost = state.cost; bestShards = shardsUsed; endSkill = s end
+                end
+                break
+            end
+        end
+        if bestCost >= math.huge or not bestShards then return nil, 0 end
+    end
+
+    -- Backtrack to build steps; then add learn cost on first use and consolidate into route.
+    local steps = {}
+    local currSkill, currShards = endSkill, bestShards
+    while currSkill > startSkill do
+        local state = dp[currSkill][currShards]
+        if not state or not state.prev then break end
+        local p = state.prev
+        local stepFragQty = {}
+        for id, c in pairs(p.option.fragmentQty or {}) do
+            stepFragQty[id] = (stepFragQty[id] or 0) + c * p.crafts
+        end
+        table.insert(steps, 1, {
+            recipe = p.rec,
+            skillBefore = p.fromSkill,
+            skillAfter = currSkill,
+            crafts = p.crafts,
+            craftCost = (p.option.cost or 0) * p.crafts,
+            craftShards = (p.option.shardsUsed or 0) * p.crafts,
+            fragmentQty = stepFragQty,
+        })
+        currSkill, currShards = p.fromSkill, p.fromShards
+    end
+
+    if #steps == 0 then return nil, 0 end
+
+    -- Consolidate consecutive same recipe and build route with same format as greedy.
+    local consolidatedRoute = {}
+    local seenRecipesForAcq = {}
+    local i = 1
+    while i <= #steps do
+        local segStart = i
+        local rec = steps[i].recipe
+        while i <= #steps and steps[i].recipe.name == rec.name do i = i + 1 end
+        local segEnd = i - 1
+        local totalCrafts = 0
+        local totalMatCost = 0
+        local totalFragmentsSeg = 0
+        local fragmentSources = {}
+        for s = segStart, segEnd do
+            totalCrafts = totalCrafts + (steps[s].crafts or 1)
+            totalMatCost = totalMatCost + (steps[s].craftCost or 0)
+            totalFragmentsSeg = totalFragmentsSeg + (steps[s].craftShards or 0)
+            for id, qty in pairs(steps[s].fragmentQty or {}) do
+                fragmentSources[id] = (fragmentSources[id] or 0) + qty
+            end
+        end
+        local materialDetails = {}
+        for _, r in ipairs(rec.reagents or {}) do
+            local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+            if id then
+                local qty = totalCrafts * (r.count or 0)
+                materialDetails[#materialDetails + 1] = { itemID = id, qty = qty, unitPrice = L.GetItemPrice(id) or 0 }
+            end
+        end
+        local recCostOnce = 0
+        if not seenRecipesForAcq[rec.name] and not rec.isKnown and (rec.acqCost or 0) > 0 then
+            recCostOnce = rec.acqCost or 0
+            seenRecipesForAcq[rec.name] = true
+        end
+        local useAH = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
+        local bestSb = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
+        local numMade = rec.numMade or 1
+        local totalSV = (rec.sellPricePerItem or 0) * numMade * totalCrafts
+        local totalSA = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * totalCrafts
+        local sellBack = (bestSb and bestSb > 0) and (bestSb * numMade * totalCrafts) or (useAH and totalSA or totalSV)
+        local t = math.floor(steps[segStart].skillBefore + 0.5)
+        local e = math.floor(steps[segEnd].skillAfter + 0.5)
+        if e <= t then e = t + 1 end
+        table.insert(consolidatedRoute, {
+            startSkill          = t,
+            endSkill            = e,
+            recipe              = rec,
+            totalCrafts         = totalCrafts,
+            totalMatCost        = totalMatCost,
+            totalSellBackVendor = totalSV,
+            totalSellBackAH     = totalSA,
+            totalRecCost        = recCostOnce,
+            recSource           = rec.acqSource or "",
+            segmentTotalCost    = recCostOnce + totalMatCost - sellBack,
+            materialDetails     = materialDetails,
+            fragmentCount       = totalFragmentsSeg,
+            fragmentSources     = fragmentSources,
+        })
+    end
     local totalCost = 0
     for _, seg in ipairs(consolidatedRoute) do
         totalCost = totalCost + (seg.segmentTotalCost or 0)
@@ -1337,15 +1594,11 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
             for s = targetStart, targetEnd do
                 if dp[s] < DPINF then maxReached = s end
             end
-            L.Print(string.format("错误: 算法在等级 %d 处中断，无法到达 %d。请检查此时是否缺少可用的后续配方。", maxReached, targetEnd))
-            return nil, 0
-        end
-
-        -- Reconstruct route by backtracking.
-        local consolidatedRoute = {}
-        local curr        = targetEnd
-        local seenRecipes = {}
-        while curr > targetStart do
+            -- Reconstruct partial route up to maxReached; caller will print partial-route message.
+            local consolidatedRoute = {}
+            local curr        = maxReached
+            local seenRecipes = {}
+            while curr > targetStart do
             local seg = segPath[curr]
             if not seg then break end
             local info = recInfos[seg.ri]
@@ -1393,6 +1646,64 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
                 materialDetails     = materialDetails,
             })
             curr = t
+            end
+            local totalCostFromRoute = 0
+            for _, seg in ipairs(consolidatedRoute) do
+                totalCostFromRoute = totalCostFromRoute + (seg.segmentTotalCost or 0)
+            end
+            return consolidatedRoute, totalCostFromRoute
+        end
+        -- Reconstruct full route by backtracking.
+        local consolidatedRoute = {}
+        local curr        = targetEnd
+        local seenRecipes = {}
+        while curr > targetStart do
+            local seg = segPath[curr]
+            if not seg then break end
+            local info = recInfos[seg.ri]
+            local rec  = info.rec
+            local t, e = seg.startT, curr
+            local totalMat    = (info.pMat[e]    or 0) - (info.pMat[t]    or 0)
+            local totalSV     = (info.pSellV[e]  or 0) - (info.pSellV[t]  or 0)
+            local totalSA     = (info.pSellA[e]  or 0) - (info.pSellA[t]  or 0)
+            local totalCrafts = (info.pCrafts[e] or 0) - (info.pCrafts[t] or 0)
+            local recCostOnce = 0
+            if not seenRecipes[rec.name] then
+                recCostOnce = seg.recCostActual or 0
+                seenRecipes[rec.name] = true
+            end
+            local useAH    = (db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and db.AHSellBackBlacklist[rec.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and db.AHSellBackWhitelist[rec.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(rec.createdItemID))))
+            local bestSb   = (db.UseDisenchantRecovery and L.GetBestSellBackPerItem(rec, db)) or nil
+            local craftCount = math.ceil(totalCrafts)
+            local totalMat   = 0
+            local materialDetails = {}
+            for _, r in ipairs(rec.reagents or {}) do
+                local id = r.itemID or (r.name and nameToID and nameToID[r.name])
+                if id then
+                    local qty = craftCount * (r.count or 0)
+                    local unitPrice = (effectiveCost[id] and effectiveCost[id] < EFF_COST_UNKNOWN) and effectiveCost[id] or 0
+                    totalMat = totalMat + qty * unitPrice
+                    materialDetails[#materialDetails + 1] = { itemID = id, qty = qty, unitPrice = unitPrice }
+                end
+            end
+            local numMade = rec.numMade or 1
+            local totalSV = (rec.sellPricePerItem or 0) * numMade * craftCount
+            local totalSA = (rec.ahPricePerItem or 0) * AH_TAX_FACTOR * numMade * craftCount
+            local sellBack = (bestSb and bestSb > 0) and (bestSb * numMade * craftCount) or (useAH and totalSA or totalSV)
+            table.insert(consolidatedRoute, 1, {
+                startSkill          = t,
+                endSkill            = e,
+                recipe              = rec,
+                totalCrafts         = craftCount,
+                totalMatCost        = totalMat,
+                totalSellBackVendor = totalSV,
+                totalSellBackAH     = totalSA,
+                totalRecCost        = recCostOnce,
+                recSource           = rec.acqSource,
+                segmentTotalCost    = recCostOnce + totalMat - sellBack,
+                materialDetails     = materialDetails,
+            })
+            curr = t
         end
         local totalCostFromRoute = 0
         for _, seg in ipairs(consolidatedRoute) do
@@ -1404,7 +1715,35 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
     -- Round 1: standard benchmark prices, no route-produced info yet.
     local effectiveCost = L.ComputeEffectiveMaterialCosts(allRecipes)
 
-    -- When tiered pricing is on, use greedy optimizer (global materialUsed + learnCost on first use).
+    -- When fragment limit is set, run 2D DP so route uses at most that many fragments;
+    -- materials beyond the limit are sourced from AH/craft. If 2D DP finds no path (edge case), fall back to normal DP.
+    local raw = db.AvailableTitanFragments
+    local titanCap = (type(raw) == "number" and raw >= 0) and raw or nil
+    if titanCap == nil and type(raw) == "string" then
+        local n = tonumber(raw)
+        if n and n >= 0 then titanCap = math.floor(n) end
+    end
+    if titanCap ~= nil then
+        local filteredRecipes = filterRecipes(effectiveCost)
+        L.Print("过滤后可用配方数量: " .. #filteredRecipes)
+        local prefixCostTable = {}
+        for id in pairs(db.AHPriceCurve or {}) do
+            local pc = L.BuildPrefixCost(id)
+            if pc then prefixCostTable[id] = pc end
+        end
+        local recipesProducing = L.BuildRecipesProducing(filteredRecipes, nameToID)
+        local route, totalCost = L.Run2DTitanDP(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName, titanCap)
+        if route then
+            L.Print("泰坦碎片上限(" .. tostring(titanCap) .. ") 2D DP 路线计算完成。")
+            if #route > 0 and route[#route].endSkill < targetEnd then
+                L.Print(string.format("路线无法到达目标等级 %d，已显示可完成部分 (%d -> %d)。", targetEnd, targetStart, route[#route].endSkill))
+            end
+            return route, profName, targetStart, targetEnd, totalCost
+        end
+        L.Print("泰坦碎片上限(" .. tostring(titanCap) .. ") 2D DP 未找到路径，将使用无碎片限制的路线（可能超出设定碎片数）。")
+    end
+
+    -- When tiered pricing is on and no fragment limit, use greedy optimizer.
     if useTieredPricing then
         local filteredRecipes = filterRecipes(effectiveCost)
         L.Print("过滤后可用配方数量: " .. #filteredRecipes)
@@ -1417,6 +1756,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         local route, totalCost = L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName)
         if route then
             L.Print("阶梯价格贪心路线计算完成。")
+            if #route > 0 and route[#route].endSkill < targetEnd then
+                L.Print(string.format("路线无法到达目标等级 %d，已显示可完成部分 (%d -> %d)。", targetEnd, targetStart, route[#route].endSkill))
+            end
             return route, profName, targetStart, targetEnd, totalCost
         end
     end
@@ -1468,6 +1810,9 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
 
     if not route then
         return nil, profName, targetStart, targetEnd, 0
+    end
+    if #route > 0 and route[#route].endSkill < targetEnd then
+        L.Print(string.format("路线无法到达目标等级 %d，已显示可完成部分 (%d -> %d)。", targetEnd, targetStart, route[#route].endSkill))
     end
     return route, profName, targetStart, targetEnd, totalCost
 end

@@ -1496,16 +1496,18 @@ function L.ShowResultList()
         local totalGold = 0
         local totalFragments = 0
         for _, seg in ipairs(route) do
-            local fragmentCount = 0
-            for _, r in ipairs(seg.recipe.reagents or {}) do
-                local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
-                if id and db then
-                    local fragCost = (db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
-                    local ahCost = (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
-                    local vendorCost = (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
-                    local best = math.min(ahCost, vendorCost, fragCost)
-                    if fragCost < 999999999 and best == fragCost then
-                        fragmentCount = fragmentCount + (r.count or 0) * seg.totalCrafts * (db.FragmentCosts[id] or 0)
+            local fragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0) and seg.fragmentCount or 0
+            if fragmentCount == 0 then
+                for _, r in ipairs(seg.recipe.reagents or {}) do
+                    local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+                    if id and db then
+                        local fragCost = (db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                        local ahCost = (db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                        local vendorCost = (ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
+                        local best = math.min(ahCost, vendorCost, fragCost)
+                        if fragCost < 999999999 and best == fragCost then
+                            fragmentCount = fragmentCount + (r.count or 0) * seg.totalCrafts * (db.FragmentCosts[id] or 0)
+                        end
                     end
                 end
             end
@@ -1551,6 +1553,8 @@ function L.ShowResultList()
         local buyTotals = {}
         local fragTotals = {}
         local fragOrder = {}
+        local fragOrderSet = {}
+        local routeUsesFragmentCount = false
         for i, seg in ipairs(route) do
             local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             table.insert(content.lines, line)
@@ -1559,8 +1563,10 @@ function L.ShowResultList()
 
             local reqStr = ""
             local fragStr = ""
-            local fragmentCount = 0
+            local useRouteFragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
+            local fragmentCount = useRouteFragmentCount and seg.fragmentCount or 0
             local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+            -- When route provides fragmentCount we do not infer "fragment vs buy" per material (route may mix sources).
             for i, r in ipairs(seg.recipe.reagents or {}) do
                 local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
                 local itemName = r.name
@@ -1578,36 +1584,65 @@ function L.ShowResultList()
                 end
                 local m = seg.materialDetails and seg.materialDetails[i]
                 local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
-                local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
-                local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
-                local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
-                local best = math.min(ahCost, vendorCost, fragCost)
-                local useFrag = (fragCost < 999999999 and best == fragCost)
-                if useFrag then
-                    fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
-                    local fragUnit = (id and db and db.FragmentCosts and db.FragmentCosts[id] and fragVal) and (db.FragmentCosts[id] * fragVal) or nil
-                    local pricePart = fragUnit and ("(" .. CopperToGold(fragUnit) .. ")") or ""
-                    fragStr = fragStr .. itemName .. pricePart .. "*" .. totQty .. " "
-                else
-                    local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. CopperToGold(m.unitPrice) .. ")") or ""
-                    reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
+                local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. CopperToGold(m.unitPrice) .. ")") or ""
+                reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
+                if not useRouteFragmentCount then
+                    local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                    local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                    local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
+                    local best = math.min(ahCost, vendorCost, fragCost)
+                    local useFrag = (fragCost < 999999999 and best == fragCost)
+                    if useFrag then
+                        fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
+                        local fragUnit = (id and db and db.FragmentCosts and db.FragmentCosts[id] and fragVal) and (db.FragmentCosts[id] * fragVal) or nil
+                        local fp = fragUnit and ("(" .. CopperToGold(fragUnit) .. ")") or ""
+                        fragStr = fragStr .. itemName .. fp .. "*" .. totQty .. " "
+                    end
                 end
-                -- Summary: record net buy qty for to-buy / fragment (consumed - produced).
+                -- Summary: when route gives fragmentCount we put materials in buyTotals only (need to obtain; split AH/fragment unknown).
                 if id and not buyTotals[id] and not fragTotals[id] then
                     local netQty = netBuyQtyMap[id]
                     if netQty and netQty > 0 then
-                        if useFrag then
-                            fragOrder[#fragOrder + 1] = id
-                            fragTotals[id] = { name = itemName, qty = netQty }
-                        else
+                        if useRouteFragmentCount then
                             buyTotals[id] = { name = itemName, qty = netQty }
+                        else
+                            local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                            local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                            local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
+                            local best = math.min(ahCost, vendorCost, fragCost)
+                            local useFrag = (fragCost < 999999999 and best == fragCost)
+                            if useFrag then
+                                if not fragOrderSet[id] then fragOrderSet[id] = true; table.insert(fragOrder, id) end
+                                fragTotals[id] = { name = itemName, qty = netQty }
+                            else
+                                buyTotals[id] = { name = itemName, qty = netQty }
+                            end
                         end
                     end
                 end
             end
             if reqStr == "" then reqStr = "无" end
             local materialsLine = reqStr
-            if fragStr ~= "" then
+            if useRouteFragmentCount and seg.fragmentSources and next(seg.fragmentSources) then
+                routeUsesFragmentCount = true
+                local segFragStr = ""
+                for id, qty in pairs(seg.fragmentSources) do
+                    local itemName = (db and db.NameToID) and nil
+                    if not itemName and id then
+                        if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(id) end
+                        if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
+                    end
+                    if not itemName then itemName = "ID:" .. tostring(id) end
+                    segFragStr = segFragStr .. itemName .. "*" .. tostring(math.floor(qty + 0.5)) .. " "
+                    fragTotals[id] = { name = itemName, qty = (fragTotals[id] and fragTotals[id].qty or 0) + qty }
+                    if not fragOrderSet[id] then fragOrderSet[id] = true; table.insert(fragOrder, id) end
+                end
+                if segFragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. segFragStr end
+                if fragmentCount > 0 and segFragStr == "" then materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. " 碎片" end
+            elseif useRouteFragmentCount and fragmentCount > 0 then
+                routeUsesFragmentCount = true
+                materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. " 碎片"
+            elseif fragStr ~= "" then
                 materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
             end
 
@@ -1745,7 +1780,13 @@ function L.ShowResultList()
             local t = fragTotals[id]
             if t then fragLineStr = fragLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
         end
-        if fragLineStr == "碎片兑换: " then fragLineStr = "碎片兑换: 无" end
+        if fragLineStr == "碎片兑换: " then
+            if routeUsesFragmentCount and totalFragments > 0 then
+                fragLineStr = "碎片兑换: 共 " .. tostring(math.floor(totalFragments + 0.5)) .. " 碎片 (路线实际使用)"
+            else
+                fragLineStr = "碎片兑换: 无"
+            end
+        end
 
         local buySummaryLine = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         table.insert(content.lines, buySummaryLine)
@@ -1868,16 +1909,21 @@ function L.ShowExportFrame()
     local buyTotals = {}
     local fragTotals = {}
     local fragOrder = {}
+    local exportFragTotals = {}
+    local exportFragOrder = {}
+    local exportFragOrderSet = {}
 
     local exportTotalGold = 0
     local exportTotalCost = 0
     local exportTotalFragments = 0
+    local exportRouteUsesFragmentCount = false
     local bodyTxt = ""
     for _, seg in ipairs(data.route) do
         local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
         local reqStr = ""
         local fragStr = ""
-        local fragmentCount = 0
+        local useRouteFragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
+        local fragmentCount = useRouteFragmentCount and seg.fragmentCount or 0
         for i, r in ipairs(seg.recipe.reagents or {}) do
             local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
             local itemName = r.name
@@ -1888,35 +1934,66 @@ function L.ShowExportFrame()
             if not itemName then itemName = "ID:" .. tostring(id or r.itemID) end
             local m = seg.materialDetails and seg.materialDetails[i]
             local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
-            local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
-            local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
-            local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
-            local best = math.min(ahCost, vendorCost, fragCost)
-            local useFrag = (fragCost < 999999999 and best == fragCost)
-            if useFrag then
-                fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
-                local fragUnit = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or nil
-                local pricePart = fragUnit and ("(" .. c2s(fragUnit) .. ")") or ""
-                fragStr = fragStr .. itemName .. pricePart .. "*" .. totQty .. " "
-            else
-                local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. c2s(m.unitPrice) .. ")") or ""
-                reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
+            local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. c2s(m.unitPrice) .. ")") or ""
+            reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
+            if not useRouteFragmentCount then
+                local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
+                local best = math.min(ahCost, vendorCost, fragCost)
+                local useFrag = (fragCost < 999999999 and best == fragCost)
+                if useFrag then
+                    fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
+                    local fragUnit = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or nil
+                    local fp = fragUnit and ("(" .. c2s(fragUnit) .. ")") or ""
+                    fragStr = fragStr .. itemName .. fp .. "*" .. totQty .. " "
+                end
             end
-            if id and not buyTotals[id] and not fragTotals[id] then
+            if id and not buyTotals[id] and not fragTotals[id] and not exportFragTotals[id] then
                 local netQty = netBuyQtyMap[id]
                 if netQty and netQty > 0 then
-                    if useFrag then
-                        fragOrder[#fragOrder + 1] = id
-                        fragTotals[id] = { name = itemName, qty = netQty }
-                    else
+                    if useRouteFragmentCount then
                         buyTotals[id] = { name = itemName, qty = netQty }
+                    else
+                        local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                        local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                        local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
+                        local best = math.min(ahCost, vendorCost, fragCost)
+                        local useFrag = (fragCost < 999999999 and best == fragCost)
+                        if useFrag then
+                            if not exportFragOrderSet[id] then exportFragOrderSet[id] = true; table.insert(exportFragOrder, id) end
+                            fragTotals[id] = { name = itemName, qty = netQty }
+                        else
+                            buyTotals[id] = { name = itemName, qty = netQty }
+                        end
                     end
                 end
             end
         end
         if reqStr == "" then reqStr = "无" end
         local materialsLine = reqStr
-        if fragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr end
+        if useRouteFragmentCount and seg.fragmentSources and next(seg.fragmentSources) then
+            exportRouteUsesFragmentCount = true
+            local segFragStr = ""
+            for id, qty in pairs(seg.fragmentSources) do
+                local itemName = (db and db.NameToID) and nil
+                if not itemName and id then
+                    if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(id) end
+                    if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
+                end
+                if not itemName then itemName = "ID:" .. tostring(id) end
+                segFragStr = segFragStr .. itemName .. "*" .. tostring(math.floor(qty + 0.5)) .. " "
+                exportFragTotals[id] = { name = itemName, qty = (exportFragTotals[id] and exportFragTotals[id].qty or 0) + qty }
+                if not exportFragOrderSet[id] then exportFragOrderSet[id] = true; table.insert(exportFragOrder, id) end
+            end
+            if segFragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. segFragStr end
+            if fragmentCount > 0 and segFragStr == "" then materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. "碎片" end
+        elseif useRouteFragmentCount and fragmentCount > 0 then
+            exportRouteUsesFragmentCount = true
+            materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. "碎片"
+        elseif fragStr ~= "" then
+            materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
+        end
 
         local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
         local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
@@ -1967,7 +2044,7 @@ function L.ShowExportFrame()
         end
         for _, r in ipairs(seg.recipe.reagents or {}) do
             local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
-            if id and netBuyQtyMap[id] and not fragTotals[id] and not materialAdded[id] then
+            if id and netBuyQtyMap[id] and not fragTotals[id] and not exportFragTotals[id] and not materialAdded[id] then
                 materialAdded[id] = true
                 local t = buyTotals[id]
                 purchaseList[#purchaseList + 1] = { type = "material", name = t and t.name or ("ID:" .. tostring(id)), qty = netBuyQtyMap[id] }
@@ -1981,11 +2058,18 @@ function L.ShowExportFrame()
     end
     if buyLineStr == "要买的: " then buyLineStr = "要买的: 无" end
     local fragLineStr = "碎片兑换: "
-    for _, id in ipairs(fragOrder) do
-        local t = fragTotals[id]
+    local orderForFrag = (#exportFragOrder > 0) and exportFragOrder or fragOrder
+    for _, id in ipairs(orderForFrag) do
+        local t = exportFragTotals[id] or fragTotals[id]
         if t then fragLineStr = fragLineStr .. (t.name or ("ID:" .. tostring(id))) .. "*" .. t.qty .. " " end
     end
-    if fragLineStr == "碎片兑换: " then fragLineStr = "碎片兑换: 无" end
+    if fragLineStr == "碎片兑换: " then
+        if exportRouteUsesFragmentCount and exportTotalFragments > 0 then
+            fragLineStr = "碎片兑换: 共 " .. tostring(math.floor(exportTotalFragments + 0.5)) .. " 碎片 (路线实际使用)"
+        else
+            fragLineStr = "碎片兑换: 无"
+        end
+    end
 
     local totalFragStr = exportTotalFragments > 0 and (tostring(math.floor(exportTotalFragments + 0.5)) .. "碎片") or "0碎片"
     local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 总成本: %s  净成本: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalCost), c2s(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
