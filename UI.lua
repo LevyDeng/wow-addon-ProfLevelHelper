@@ -1766,7 +1766,6 @@ function L.ShowResultList()
             cRecipe:SetText(rNameC)
             cRecPrice:SetText(CopperToGold(seg.totalRecCost or 0))
 
-            local sellbackLabel = useDisenchant and "分解" or "AH"
             local _, breakdown = nil, nil
             if L.GetDisenchantValueAndBreakdown and seg.recipe.createdItemID then
                 _, breakdown = L.GetDisenchantValueAndBreakdown(seg.recipe.createdItemID)
@@ -1786,11 +1785,15 @@ function L.ShowResultList()
 
             cMaterials:SetText(materialsLine)
             
-            local sellInfo = ("卖NPC: %s\n%s: %s"):format(
+            -- Always show both vendor and AH recovery (same as CSV); when disenchant recovery, add one line for disenchant total
+            local sellInfo = ("卖NPC: %s\nAH: %s"):format(
                 CopperToGold(seg.totalSellBackVendor or 0),
-                sellbackLabel,
-                CopperToGold(useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
+                CopperToGold(seg.totalSellBackAH or 0)
             )
+            if useDisenchant and bestSb and bestSb > 0 then
+                local totalDE = bestSb * (seg.recipe.numMade or 1) * seg.totalCrafts
+                sellInfo = sellInfo .. "\n分解: " .. CopperToGold(totalDE)
+            end
             cSellback:SetText(sellInfo .. deLine)
             
             cProdCost:SetText(CopperToGold((seg.totalRecCost or 0) + goldMat))
@@ -2293,11 +2296,12 @@ function L.ShowExportFrame()
         local sellback = (bestSbExport and bestSbExport > 0) and (bestSbExport * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
         local segGold = (seg.totalRecCost or 0) + goldMatSeg - sellback
         
-        local sellbackInfo = "卖NPC:" .. c2s(seg.totalSellBackAH or 0)
+        local sellbackInfo = "卖NPC:" .. c2s(seg.totalSellBackVendor or 0) .. "\n卖AH:" .. c2s(seg.totalSellBackAH or 0)
         if useDisenchant then
-            sellbackInfo = sellbackInfo .. "\n分解:" .. c2s(sellback)
-            local vendorBetter = (seg.totalSellBackVendor or 0) > (seg.totalSellBackAH or 0)
-            if vendorBetter then sellbackInfo = sellbackInfo .. "\n(卖店更划算)" end
+            local deVal = L.GetDisenchantValueAndBreakdown and L.GetDisenchantValueAndBreakdown(seg.recipe.createdItemID)
+            if deVal and deVal > 0 then
+                sellbackInfo = sellbackInfo .. "\n分解:" .. c2s(deVal * (seg.recipe.numMade or 1) * seg.totalCrafts)
+            end
         end
 
         local csvRow = {
