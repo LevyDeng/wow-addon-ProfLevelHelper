@@ -1573,9 +1573,9 @@ function L.ShowResultList()
         local fragOrder = {}
         local fragOrderSet = {}
         local routeUsesFragmentCount = false
-        -- Table Column Definitions (10 Columns)
-        local colX = {0, 60, 125, 175, 220, 580, 840, 930, 1020, 1070}
-        local colW = {55, 60, 45, 40, 355, 255, 85, 85, 45, 120}
+        -- Table Column Definitions (10 Columns); col3 "配方价格" widened, col6 "回血信息" shortened
+        local colX = {0, 60, 125, 200, 245, 605, 835, 925, 1015, 1065}
+        local colW = {55, 60, 70, 40, 355, 225, 85, 85, 45, 120}
         
         -- Header Row
         local header = CreateFrame("Frame", nil, content)
@@ -1592,7 +1592,7 @@ function L.ShowResultList()
         end
         CreateHeaderCol("点数", colX[1], colW[1])
         CreateHeaderCol("配方名", colX[2], colW[2])
-        CreateHeaderCol("价格", colX[3], colW[3])
+        CreateHeaderCol("配方价格", colX[3], colW[3])
         CreateHeaderCol("次数", colX[4], colW[4])
         CreateHeaderCol("材料", colX[5], colW[5])
         CreateHeaderCol("回血信息", colX[6], colW[6])
