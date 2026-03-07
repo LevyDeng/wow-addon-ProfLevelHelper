@@ -1571,6 +1571,10 @@ function L.ShowResultList()
             local useRouteFragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
             local fragmentCount = useRouteFragmentCount and seg.fragmentCount or 0
             local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+            local totalRefCost = 0
+            local totalTieredCost = 0
+            local materialsList = {}
+            local tieredMaterialsList = {}
             -- When route provides fragmentCount we do not infer "fragment vs buy" per material (route may mix sources).
             for i, r in ipairs(seg.recipe.reagents or {}) do
                 local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
@@ -1589,8 +1593,17 @@ function L.ShowResultList()
                 end
                 local m = seg.materialDetails and seg.materialDetails[i]
                 local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
-                local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. CopperToGold(m.unitPrice) .. ")") or ""
-                reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
+                local unitPrice = (m and m.unitPrice and m.unitPrice > 0) and m.unitPrice or 0
+                local tiers = seg.materialPriceTiers and id and seg.materialPriceTiers[id]
+                if tiers and #tiers > 0 then
+                    local tierCost = 0
+                    for _, t in ipairs(tiers) do tierCost = tierCost + (t.price or 0) * (t.qty or 0) end
+                    totalTieredCost = totalTieredCost + tierCost
+                    tieredMaterialsList[#tieredMaterialsList + 1] = { itemName = itemName, tiers = tiers }
+                else
+                    totalRefCost = totalRefCost + unitPrice * totQty
+                    materialsList[#materialsList + 1] = { itemName = itemName, totQty = totQty, unitPrice = unitPrice }
+                end
                 if not useRouteFragmentCount then
                     local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                     local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
@@ -1626,6 +1639,22 @@ function L.ShowResultList()
                     end
                 end
             end
+            -- Scale material unit prices so displayed total matches segment cost (goldMat)
+            local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
+            local scale = (totalRefCost and totalRefCost > 0 and (goldMat - totalTieredCost) >= 0) and ((goldMat - totalTieredCost) / totalRefCost) or 1
+            for _, mat in ipairs(tieredMaterialsList) do
+                local parts = {}
+                for _, t in ipairs(mat.tiers) do
+                    local pricePart = (t.price and t.price > 0) and ("(" .. CopperToGold(t.price) .. ")") or ""
+                    parts[#parts + 1] = pricePart .. "*" .. (t.qty or 0)
+                end
+                reqStr = reqStr .. mat.itemName .. " " .. table.concat(parts, " ") .. " "
+            end
+            for _, mat in ipairs(materialsList) do
+                local displayPrice = mat.unitPrice * scale
+                local pricePart = (displayPrice > 0) and ("(" .. CopperToGold(displayPrice) .. ")") or ""
+                reqStr = reqStr .. mat.itemName .. pricePart .. "*" .. mat.totQty .. " "
+            end
             if reqStr == "" then reqStr = "无" end
             local materialsLine = reqStr
             if useRouteFragmentCount and seg.fragmentSources and next(seg.fragmentSources) then
@@ -1651,7 +1680,6 @@ function L.ShowResultList()
                 materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
             end
 
-            local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
             local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
             local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
             local bestSb = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
@@ -1930,6 +1958,10 @@ function L.ShowExportFrame()
         local fragStr = ""
         local useRouteFragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
         local fragmentCount = useRouteFragmentCount and seg.fragmentCount or 0
+        local totalRefCost = 0
+        local materialsListExport = {}
+        local totalTieredCostExport = 0
+        local tieredMaterialsListExport = {}
         for i, r in ipairs(seg.recipe.reagents or {}) do
             local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
             local itemName = r.name
@@ -1940,8 +1972,17 @@ function L.ShowExportFrame()
             if not itemName then itemName = "ID:" .. tostring(id or r.itemID) end
             local m = seg.materialDetails and seg.materialDetails[i]
             local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
-            local pricePart = (m and m.unitPrice and m.unitPrice > 0) and ("(" .. c2s(m.unitPrice) .. ")") or ""
-            reqStr = reqStr .. itemName .. pricePart .. "*" .. totQty .. " "
+            local unitPrice = (m and m.unitPrice and m.unitPrice > 0) and m.unitPrice or 0
+            local tiersExport = seg.materialPriceTiers and id and seg.materialPriceTiers[id]
+            if tiersExport and #tiersExport > 0 then
+                local tierCost = 0
+                for _, t in ipairs(tiersExport) do tierCost = tierCost + (t.price or 0) * (t.qty or 0) end
+                totalTieredCostExport = totalTieredCostExport + tierCost
+                tieredMaterialsListExport[#tieredMaterialsListExport + 1] = { itemName = itemName, tiers = tiersExport }
+            else
+                totalRefCost = totalRefCost + unitPrice * totQty
+                materialsListExport[#materialsListExport + 1] = { itemName = itemName, totQty = totQty, unitPrice = unitPrice }
+            end
             if not useRouteFragmentCount then
                 local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                 local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
@@ -1976,6 +2017,21 @@ function L.ShowExportFrame()
                 end
             end
         end
+        local goldMatExport = (seg.totalMatCost or 0) - fragmentCount * fragVal
+        local scaleExport = (totalRefCost and totalRefCost > 0 and (goldMatExport - totalTieredCostExport) >= 0) and ((goldMatExport - totalTieredCostExport) / totalRefCost) or 1
+        for _, mat in ipairs(tieredMaterialsListExport) do
+            local parts = {}
+            for _, t in ipairs(mat.tiers) do
+                local pricePart = (t.price and t.price > 0) and ("(" .. c2s(t.price) .. ")") or ""
+                parts[#parts + 1] = pricePart .. "*" .. (t.qty or 0)
+            end
+            reqStr = reqStr .. mat.itemName .. " " .. table.concat(parts, " ") .. " "
+        end
+        for _, mat in ipairs(materialsListExport) do
+            local displayPrice = mat.unitPrice * scaleExport
+            local pricePart = (displayPrice > 0) and ("(" .. c2s(displayPrice) .. ")") or ""
+            reqStr = reqStr .. mat.itemName .. pricePart .. "*" .. mat.totQty .. " "
+        end
         if reqStr == "" then reqStr = "无" end
         local materialsLine = reqStr
         if useRouteFragmentCount and seg.fragmentSources and next(seg.fragmentSources) then
@@ -2001,12 +2057,11 @@ function L.ShowExportFrame()
             materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
         end
 
-        local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
         local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
         local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
         local bestSbExport = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
         local sellback = (bestSbExport and bestSbExport > 0) and (bestSbExport * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
-        local segTotalCostExport = (seg.totalRecCost or 0) + goldMat
+        local segTotalCostExport = (seg.totalRecCost or 0) + goldMatExport
         local segGold = segTotalCostExport - sellback
         local fragCostStr = fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5)) .. "碎片") or "0碎片"
         local acq = seg.recSource and ("来源:"..seg.recSource) or ""
@@ -2031,7 +2086,7 @@ function L.ShowExportFrame()
                 deLineExport = deLabelExport .. " " .. table.concat(parts, ", ")
             end
         end
-        bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s %s:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s%s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMat), fragCostStr, c2s(seg.totalSellBackVendor), sellbackLabelExport, c2s(seg.totalSellBackAH), c2sSigned(segGold), fragCostStr, acq, materialsLine, deLineExport)
+        bodyTxt = bodyTxt .. string.format("[%d-%d] %s x%.0f次 | 配方:%s 制作(金钱):%s 制作(碎片):%s 回血(卖NPC:%s %s:%s) 净花费(金钱):%s 净花费(碎片):%s | %s - 材料: %s%s\n", seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts, c2s(seg.totalRecCost), c2s(goldMatExport), fragCostStr, c2s(seg.totalSellBackVendor), sellbackLabelExport, c2s(seg.totalSellBackAH), c2sSigned(segGold), fragCostStr, acq, materialsLine, deLineExport)
     end
 
     local purchaseList = {}

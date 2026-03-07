@@ -853,6 +853,39 @@ function L.GetAHMarginalCost(itemID, qty, used, prefixCostTable)
     return (L.GetItemPrice(itemID) or 0) * qty
 end
 
+-- Per-tier breakdown for buying qty units starting at used: { { price = copper, qty = n }, ... }.
+-- Used so UI can show e.g. "铜矿石(0金14银)*50 (0金16银)*45" when segment uses multiple price tiers.
+function L.GetAHMarginalCostBreakdown(itemID, qty, used, prefixCostTable)
+    if not itemID or not qty or qty <= 0 then return {} end
+    local vp = ProfLevelHelper_VendorPrices
+    if vp and vp[itemID] and vp[itemID] > 0 then
+        return { { price = vp[itemID], qty = qty } }
+    end
+    local prefix = prefixCostTable and prefixCostTable[itemID]
+    if not prefix or #prefix == 0 then
+        local p = L.GetItemPrice(itemID) or 0
+        return p > 0 and { { price = p, qty = qty } } or {}
+    end
+    local tiers = {}
+    local lastPrice, startIdx = nil, used + 1
+    for i = 1, qty do
+        local idx = used + i
+        local prev = (idx > 1) and prefix[idx - 1] or 0
+        local curr = (idx <= #prefix) and prefix[idx] or (prefix[#prefix] + (idx - #prefix) * (prefix[#prefix] - (prefix[#prefix - 1] or 0)))
+        local unitPrice = curr - prev
+        if lastPrice == nil then
+            lastPrice, startIdx = unitPrice, i
+        elseif unitPrice ~= lastPrice then
+            tiers[#tiers + 1] = { price = lastPrice, qty = i - startIdx }
+            lastPrice, startIdx = unitPrice, i
+        end
+    end
+    if lastPrice ~= nil then
+        tiers[#tiers + 1] = { price = lastPrice, qty = qty - startIdx + 1 }
+    end
+    return tiers
+end
+
 -- Titan fragment marginal cost: cost (copper) and shardsUsed when buying qty units.
 -- titanShardsTotal nil = unlimited. Shadow price from db.FragmentValueInCopper.
 function L.GetTitanMarginalCost(itemID, qty, titanShardsUsed, titanShardsTotal)
@@ -940,13 +973,14 @@ function L.GetItemMarginalCost(itemID, qty, materialUsed, prefixCostTable, recip
     return bestCost, bestShards
 end
 
--- Marginal cost for one craft of recipe (materials only). Returns cost (copper), shardsUsed.
-function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal)
+-- Marginal cost for `crafts` crafts of recipe (materials only). Returns cost (copper), shardsUsed.
+function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal, crafts)
+    crafts = crafts or 1
     local cost, shards = 0, 0
     for _, r in ipairs(recipe.reagents or {}) do
         local id = r.itemID or (r.name and nameToID and nameToID[r.name])
         if id then
-            local c, s = L.GetItemMarginalCost(id, r.count or 0, materialUsed, prefixCostTable, recipesProducing, nameToID, {}, titanShardsUsed, titanShardsTotal)
+            local c, s = L.GetItemMarginalCost(id, (r.count or 0) * crafts, materialUsed, prefixCostTable, recipesProducing, nameToID, {}, titanShardsUsed, titanShardsTotal)
             cost, shards = cost + c, shards + s
         else
             return math.huge, 0
@@ -997,11 +1031,11 @@ function L.GetItemCostOptions(itemID, qty, materialUsed, prefixCostTable, recipe
         for _, rec in ipairs(recipes) do
             local numMade = rec.numMade or 1
             local times = math.ceil(qty / numMade)
-            local recOpts = L.GetRecipeCostOptions(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+            local recOpts = L.GetRecipeCostOptions(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, visited, times)
             for _, opt in ipairs(recOpts) do
                 local fq = {}
-                for id, c in pairs(opt.fragmentQty or {}) do fq[id] = (fq[id] or 0) + c * times end
-                options[#options + 1] = { shardsUsed = opt.shardsUsed * times, cost = opt.cost * times, fragmentQty = fq }
+                for id, c in pairs(opt.fragmentQty or {}) do fq[id] = (fq[id] or 0) + c end
+                options[#options + 1] = { shardsUsed = opt.shardsUsed, cost = opt.cost, fragmentQty = fq }
             end
         end
         visited[itemID] = nil
@@ -1009,13 +1043,14 @@ function L.GetItemCostOptions(itemID, qty, materialUsed, prefixCostTable, recipe
     return L.PruneDominatedOptions(options)
 end
 
--- Return all (shardsUsed, cost) options for one craft of recipe (materials only). Combine material options.
-function L.GetRecipeCostOptions(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+-- Return all (shardsUsed, cost) options for `crafts` crafts of recipe (materials only). Combine material options.
+function L.GetRecipeCostOptions(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, visited, crafts)
+    crafts = crafts or 1
     local totalOptions = { { shardsUsed = 0, cost = 0, fragmentQty = {} } }
     for _, r in ipairs(recipe.reagents or {}) do
         local id = r.itemID or (r.name and nameToID and nameToID[r.name])
         if not id then return {} end
-        local matOpts = L.GetItemCostOptions(id, r.count or 0, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
+        local matOpts = L.GetItemCostOptions(id, (r.count or 0) * crafts, materialUsed, prefixCostTable, recipesProducing, nameToID, visited)
         if #matOpts == 0 then return {} end
         local newOptions = {}
         for _, base in ipairs(totalOptions) do
@@ -1034,6 +1069,54 @@ function L.GetRecipeCostOptions(recipe, materialUsed, prefixCostTable, recipesPr
         if #totalOptions == 0 then return {} end
     end
     return totalOptions
+end
+
+-- Fill segment.materialPriceTiers by simulating material consumption along route order.
+-- Works for both Greedy and 2D DP: same "unit price * quantity" => tier breakdown from prefix curve.
+function L.EnrichRouteMaterialTiers(route, prefixCostTable)
+    if not route or not prefixCostTable or not next(prefixCostTable) then return end
+    local materialUsed = {}
+    for _, seg in ipairs(route) do
+        seg.materialPriceTiers = {}
+        for _, m in ipairs(seg.materialDetails or {}) do
+            local id, qty = m.itemID, m.qty
+            if not id or not qty or qty <= 0 then break end
+            local used = materialUsed[id] or 0
+            local breakdown = L.GetAHMarginalCostBreakdown(id, qty, used, prefixCostTable)
+            local tiersForId = seg.materialPriceTiers[id]
+            if not tiersForId then tiersForId = {}; seg.materialPriceTiers[id] = tiersForId end
+            for _, t in ipairs(breakdown) do
+                local found
+                for _, ex in ipairs(tiersForId) do
+                    if ex.price == t.price then ex.qty = ex.qty + t.qty; found = true; break end
+                end
+                if not found then tiersForId[#tiersForId + 1] = { price = t.price, qty = t.qty } end
+            end
+            materialUsed[id] = used + qty
+        end
+        for id, tiers in pairs(seg.materialPriceTiers) do
+            if not tiers or #tiers == 0 then
+                seg.materialPriceTiers[id] = nil
+            else
+                local tierCost = 0
+                for _, t in ipairs(tiers) do tierCost = tierCost + (t.price or 0) * (t.qty or 0) end
+                
+                -- Update totalMatCost to reflect the true tiered price instead of the base DP estimated price
+                for _, m in ipairs(seg.materialDetails or {}) do
+                    if m.itemID == id then
+                        local flatCost = m.qty * m.unitPrice
+                        -- Add the difference (tier penalty) to totalMatCost and segmentTotalCost
+                        local diff = tierCost - flatCost
+                        if diff > 0 then
+                            seg.totalMatCost = (seg.totalMatCost or 0) + diff
+                            seg.segmentTotalCost = (seg.segmentTotalCost or 0) + diff
+                        end
+                    end
+                end
+            end
+        end
+        if not next(seg.materialPriceTiers) then seg.materialPriceTiers = nil end
+    end
 end
 
 -- Greedy tiered optimizer: global materialUsed + learnCost on first use. Returns (route, totalCost) in same format as DP.
@@ -1071,15 +1154,15 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
                 if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
                 if chance > 0 then
                     local learnCost = (not learnedRecipes[rec.name] and not rec.isKnown) and (rec.acqCost or 0) or 0
-                    local craftCost, craftShards = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal)
                     local craftsThisStep = math.ceil(1 / chance)
+                    local craftCost, craftShards = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal, craftsThisStep)
                     -- Fragment limit: do not pick recipe if this step would exceed available fragments.
-                    if titanShardsTotal and (titanShardsUsed + (craftShards or 0) * craftsThisStep) > titanShardsTotal then
+                    if titanShardsTotal and (titanShardsUsed + (craftShards or 0)) > titanShardsTotal then
                         craftCost = math.huge
                         craftShards = 0
                     end
                     local totalCost = learnCost + craftCost
-                    local costPerSkill = totalCost / chance
+                    local costPerSkill = totalCost
                     if not bestRec or costPerSkill < bestCostPerSkill then
                         bestRec, bestCostPerSkill, bestChance = rec, costPerSkill, chance
                         bestCraftCost, bestCraftShards = craftCost, craftShards
@@ -1093,7 +1176,7 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         local crafts = math.max(1, math.ceil(1 / (bestChance or 1)))
         local skillBefore = currentSkill
         currentSkill = currentSkill + 1
-        titanShardsUsed = titanShardsUsed + (bestCraftShards or 0) * crafts
+        titanShardsUsed = titanShardsUsed + (bestCraftShards or 0)
         if not learnedRecipes[rec.name] then
             learnedRecipes[rec.name] = true
         end
@@ -1111,8 +1194,8 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
             skillAfter = currentSkill,
             crafts = crafts,
             materialUsedBefore = materialUsedBefore,
-            craftCost = (bestCraftCost or 0) * crafts,
-            craftShards = (bestCraftShards or 0) * crafts,
+            craftCost = bestCraftCost or 0,
+            craftShards = bestCraftShards or 0,
             chance = bestChance,
         }
     end
@@ -1222,12 +1305,12 @@ function L.Run2DTitanDP(filteredRecipes, targetStart, targetEnd, db, prefixCostT
                     if rec.skillType == "trivial" or rec.skillType == "difficult" then chance = 0 end
                     if chance > 0 then
                         local crafts = math.max(1, math.ceil(1 / chance))
-                        local opts = L.GetRecipeCostOptions(rec, {}, prefixCostTable, recipesProducing, nameToID, {})
+                        local opts = L.GetRecipeCostOptions(rec, {}, prefixCostTable, recipesProducing, nameToID, {}, crafts)
                         for _, opt in ipairs(opts) do
-                            local totalShards = opt.shardsUsed * crafts
+                            local totalShards = opt.shardsUsed
                             local newShards = shardsUsed + totalShards
                             if newShards <= maxShards then
-                                local totalCost = opt.cost * crafts
+                                local totalCost = opt.cost
                                 local newCost = state.cost + totalCost
                                 local nextState = dp[skill + 1][newShards]
                                 if not nextState or newCost < nextState.cost then
@@ -1273,15 +1356,15 @@ function L.Run2DTitanDP(filteredRecipes, targetStart, targetEnd, db, prefixCostT
         local p = state.prev
         local stepFragQty = {}
         for id, c in pairs(p.option.fragmentQty or {}) do
-            stepFragQty[id] = (stepFragQty[id] or 0) + c * p.crafts
+            stepFragQty[id] = (stepFragQty[id] or 0) + c
         end
         table.insert(steps, 1, {
             recipe = p.rec,
             skillBefore = p.fromSkill,
             skillAfter = currSkill,
             crafts = p.crafts,
-            craftCost = (p.option.cost or 0) * p.crafts,
-            craftShards = (p.option.shardsUsed or 0) * p.crafts,
+            craftCost = p.option.cost or 0,
+            craftShards = p.option.shardsUsed or 0,
             fragmentQty = stepFragQty,
         })
         currSkill, currShards = p.fromSkill, p.fromShards
@@ -1723,7 +1806,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         local n = tonumber(raw)
         if n and n >= 0 then titanCap = math.floor(n) end
     end
-    if titanCap ~= nil then
+    if titanCap ~= nil and not useTieredPricing then
         local filteredRecipes = filterRecipes(effectiveCost)
         L.Print("过滤后可用配方数量: " .. #filteredRecipes)
         local prefixCostTable = {}
@@ -1734,6 +1817,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         local recipesProducing = L.BuildRecipesProducing(filteredRecipes, nameToID)
         local route, totalCost = L.Run2DTitanDP(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName, titanCap)
         if route then
+            L.EnrichRouteMaterialTiers(route, prefixCostTable)
             L.Print("泰坦碎片上限(" .. tostring(titanCap) .. ") 2D DP 路线计算完成。")
             if #route > 0 and route[#route].endSkill < targetEnd then
                 L.Print(string.format("路线无法到达目标等级 %d，已显示可完成部分 (%d -> %d)。", targetEnd, targetStart, route[#route].endSkill))
@@ -1755,6 +1839,7 @@ function L.CalculateLevelingRoute(targetStart, targetEnd, includeHoliday)
         local recipesProducing = L.BuildRecipesProducing(filteredRecipes, nameToID)
         local route, totalCost = L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db, prefixCostTable, recipesProducing, nameToID, profName)
         if route then
+            L.EnrichRouteMaterialTiers(route, prefixCostTable)
             L.Print("阶梯价格贪心路线计算完成。")
             if #route > 0 and route[#route].endSkill < targetEnd then
                 L.Print(string.format("路线无法到达目标等级 %d，已显示可完成部分 (%d -> %d)。", targetEnd, targetStart, route[#route].endSkill))
