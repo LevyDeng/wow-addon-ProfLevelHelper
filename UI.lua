@@ -1402,7 +1402,7 @@ function L.ShowResultList()
         if not L.ResultFrame then
             local f = CreateFrame("Frame", "ProfLevelHelperResult", UIParent, "BackdropTemplate")
             L.ResultFrame = f
-            f:SetSize(660, 480)
+            f:SetSize(1240, 520)
             f:SetPoint("CENTER")
             f:SetFrameStrata("DIALOG")
             f:SetBackdrop({
@@ -1411,7 +1411,7 @@ function L.ShowResultList()
                 tile = true, tileSize = 32, edgeSize = 32,
                 insets = { left = 11, right = 12, top = 12, bottom = 11 },
             })
-            f:SetBackdropColor(0, 0, 0, 0.9)
+            f:SetBackdropColor(0, 0, 0, 0.95)
             f:EnableMouse(true)
             f:SetMovable(true)
             f:RegisterForDrag("LeftButton")
@@ -1432,7 +1432,7 @@ function L.ShowResultList()
             f.scroll = scroll
 
             local content = CreateFrame("Frame", nil, scroll)
-            content:SetSize(scroll:GetWidth() - 20, 1)
+            content:SetSize(1200, 1)
             scroll:SetScrollChild(content)
             f.content = content
 
@@ -1560,76 +1560,130 @@ function L.ShowResultList()
         local fragOrder = {}
         local fragOrderSet = {}
         local routeUsesFragmentCount = false
-        for i, seg in ipairs(route) do
-            local line = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            table.insert(content.lines, line)
-            line:SetPoint("TOPLEFT", 0, -y)
-            line:SetJustifyH("LEFT")
+        -- Table Column Definitions (10 Columns)
+        local colX = {0, 60, 125, 175, 220, 580, 840, 930, 1020, 1070}
+        local colW = {55, 60, 45, 40, 355, 255, 85, 85, 45, 120}
+        
+        -- Header Row
+        local header = CreateFrame("Frame", nil, content)
+        header:SetSize(scroll:GetWidth(), 26)
+        header:SetPoint("TOPLEFT", 0, 0)
+        table.insert(content.lines, header)
+        local function CreateHeaderCol(text, x, width)
+            local fs = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            fs:SetPoint("LEFT", x, 0)
+            fs:SetWidth(width)
+            fs:SetJustifyH("LEFT")
+            fs:SetText(text)
+            return fs
+        end
+        CreateHeaderCol("点数", colX[1], colW[1])
+        CreateHeaderCol("配方名", colX[2], colW[2])
+        CreateHeaderCol("价格", colX[3], colW[3])
+        CreateHeaderCol("次数", colX[4], colW[4])
+        CreateHeaderCol("材料", colX[5], colW[5])
+        CreateHeaderCol("回血信息", colX[6], colW[6])
+        CreateHeaderCol("制作成本", colX[7], colW[7])
+        CreateHeaderCol("净成本", colX[8], colW[8])
+        CreateHeaderCol("碎片", colX[9], colW[9])
+        CreateHeaderCol("操作", colX[10], colW[10])
+        
+        y = 28
 
-            local reqStr = ""
-            local fragStr = ""
-            local useRouteFragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
-            local fragmentCount = useRouteFragmentCount and seg.fragmentCount or 0
+        for i, seg in ipairs(route) do
+            local row = CreateFrame("Frame", nil, content, "BackdropTemplate")
+            row:SetSize(scroll:GetWidth(), 1) -- height dynamic
+            row:SetPoint("TOPLEFT", 0, -y)
+            if i % 2 == 0 then
+                row:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8"})
+                row:SetBackdropColor(1, 1, 1, 0.05)
+            end
+            table.insert(content.lines, row)
+
+            local function CreateRowCol(x, width)
+                local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                fs:SetPoint("TOPLEFT", x, -4)
+                fs:SetWidth(width)
+                fs:SetJustifyH("LEFT")
+                return fs
+            end
+
+            local cSkill = CreateRowCol(colX[1], colW[1])
+            cSkill:SetText(("[%d-%d]"):format(seg.startSkill, seg.endSkill))
+
+            local cRecipe = CreateRowCol(colX[2], colW[2])
+            local cRecPrice = CreateRowCol(colX[3], colW[3])
+            local cCrafts = CreateRowCol(colX[4], colW[4])
+            cCrafts:SetText(("%.0f次"):format(seg.totalCrafts))
+
+            local cMaterials = CreateRowCol(colX[5], colW[5])
+            local cSellback = CreateRowCol(colX[6], colW[6])
+            local cProdCost = CreateRowCol(colX[7], colW[7])
+            local cNet = CreateRowCol(colX[8], colW[8])
+            local cFrag = CreateRowCol(colX[9], colW[9])
+
+            local matLines = {}
+            local routeFragmentCountProvided = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
+            local fragmentCount = routeFragmentCountProvided and seg.fragmentCount or 0
             local alaAgent = _G.__ala_meta__ and _G.__ala_meta__.prof and _G.__ala_meta__.prof.DT and _G.__ala_meta__.prof.DT.DataAgent
+            
             local totalRefCost = 0
             local totalTieredCost = 0
-            local materialsList = {}
-            local tieredMaterialsList = {}
-            -- When route provides fragmentCount we do not infer "fragment vs buy" per material (route may mix sources).
+            local matSources = {} 
+            
             for i, r in ipairs(seg.recipe.reagents or {}) do
                 local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
                 local itemName = r.name
                 if not itemName and id then
-                    if alaAgent and alaAgent.item_name then
-                        itemName = alaAgent.item_name(id)
-                    end
-                    if not itemName then
-                        local iname = GetItemInfo(id)
-                        if iname then itemName = iname end
-                    end
+                    if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(id) end
+                    if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
                 end
-                if not itemName then
-                    itemName = "ID:" .. tostring(id or r.itemID)
-                end
+                if not itemName then itemName = "ID:" .. tostring(id or r.itemID) end
+                
                 local m = seg.materialDetails and seg.materialDetails[i]
                 local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
-                local unitPrice = (m and m.unitPrice and m.unitPrice > 0) and m.unitPrice or 0
-                local tiers = seg.materialPriceTiers and id and seg.materialPriceTiers[id]
-                if tiers and #tiers > 0 then
-                    local tierCost = 0
-                    for _, t in ipairs(tiers) do tierCost = tierCost + (t.price or 0) * (t.qty or 0) end
-                    totalTieredCost = totalTieredCost + tierCost
-                    tieredMaterialsList[#tieredMaterialsList + 1] = { itemName = itemName, tiers = tiers }
+                
+                local qF, qA = 0, 0
+                if routeFragmentCountProvided then
+                    qF = (seg.fragmentSources and seg.fragmentSources[id]) or 0
+                    qA = totQty - qF
                 else
-                    totalRefCost = totalRefCost + unitPrice * totQty
-                    materialsList[#materialsList + 1] = { itemName = itemName, totQty = totQty, unitPrice = unitPrice }
-                end
-                if not useRouteFragmentCount then
                     local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                     local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
                     local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
                     local best = math.min(ahCost, vendorCost, fragCost)
                     local useFrag = (fragCost < 999999999 and best == fragCost)
                     if useFrag then
+                        qF, qA = totQty, 0
                         fragmentCount = fragmentCount + totQty * (db.FragmentCosts[id] or 0)
-                        local fragUnit = (id and db and db.FragmentCosts and db.FragmentCosts[id] and fragVal) and (db.FragmentCosts[id] * fragVal) or nil
-                        local fp = fragUnit and ("(" .. CopperToGold(fragUnit) .. ")") or ""
-                        fragStr = fragStr .. itemName .. fp .. "*" .. totQty .. " "
+                    else
+                        qF, qA = 0, totQty
                     end
                 end
-                -- Summary: when route gives fragmentCount we put materials in buyTotals only (need to obtain; split AH/fragment unknown).
+                
+                matSources[i] = { qF = qF, qA = qA, id = id, itemName = itemName, totQty = totQty, unitPrice = (m and m.unitPrice or 0) }
+                
+                if qA > 0 then
+                    local tiers = seg.materialPriceTiers and id and seg.materialPriceTiers[id]
+                    if tiers and #tiers > 0 then
+                        for _, t in ipairs(tiers) do totalTieredCost = totalTieredCost + (t.price or 0) * (t.qty or 0) end
+                    else
+                        totalRefCost = totalRefCost + (m and m.unitPrice or 0) * qA
+                    end
+                end
+                
+                -- Summary totals
                 if id and not buyTotals[id] and not fragTotals[id] then
                     local netQty = netBuyQtyMap[id]
                     if netQty and netQty > 0 then
-                        if useRouteFragmentCount then
+                        if routeFragmentCountProvided then
                             buyTotals[id] = { name = itemName, qty = netQty }
                         else
-                            local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                            local fragCost = (id and db.FragmentCosts and db.FragmentCosts[id] and (fragVal or 0) > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
                             local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
                             local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
                             local best = math.min(ahCost, vendorCost, fragCost)
-                            local useFrag = (fragCost < 999999999 and best == fragCost)
-                            if useFrag then
+                            if fragCost < 999999999 and best == fragCost then
                                 if not fragOrderSet[id] then fragOrderSet[id] = true; table.insert(fragOrder, id) end
                                 fragTotals[id] = { name = itemName, qty = netQty }
                             else
@@ -1639,30 +1693,45 @@ function L.ShowResultList()
                     end
                 end
             end
-            -- Scale material unit prices so displayed total matches segment cost (goldMat)
+            
             local goldMat = (seg.totalMatCost or 0) - fragmentCount * fragVal
             local scale = (totalRefCost and totalRefCost > 0 and (goldMat - totalTieredCost) >= 0) and ((goldMat - totalTieredCost) / totalRefCost) or 1
-            for _, mat in ipairs(tieredMaterialsList) do
-                local parts = {}
-                for _, t in ipairs(mat.tiers) do
-                    local pricePart = (t.price and t.price > 0) and ("(" .. CopperToGold(t.price) .. ")") or ""
-                    parts[#parts + 1] = pricePart .. "*" .. (t.qty or 0)
+            
+            for i, _ in ipairs(seg.recipe.reagents or {}) do
+                local s = matSources[i]
+                if s.qF > 0 then
+                    local fPerItem = (s.id and db.FragmentCosts and db.FragmentCosts[s.id]) or 0
+                    table.insert(matLines, s.itemName .. "(" .. fPerItem .. "碎片/个)*" .. s.qF .. " ->|cff888888总计" .. s.qF .. "|r")
                 end
-                reqStr = reqStr .. mat.itemName .. " " .. table.concat(parts, " ") .. " "
+                if s.qA > 0 then
+                    local tiers = seg.materialPriceTiers and s.id and seg.materialPriceTiers[s.id]
+                    if tiers and #tiers > 0 then
+                        local parts = {}
+                        local currentAHTotal = 0
+                        for _, t in ipairs(tiers) do
+                            local pricePart = (t.price and t.price > 0) and ("(" .. CopperToGold(t.price) .. ")") or ""
+                            parts[#parts + 1] = pricePart .. "*" .. (t.qty or 0)
+                            currentAHTotal = currentAHTotal + (t.qty or 0)
+                        end
+                        table.insert(matLines, s.itemName .. " " .. table.concat(parts, " ") .. " ->|cff888888总计" .. currentAHTotal .. "|r")
+                    else
+                        local displayPrice = s.unitPrice * scale
+                        local pricePart = (displayPrice > 0) and ("(" .. CopperToGold(displayPrice) .. ")") or ""
+                        table.insert(matLines, s.itemName .. pricePart .. "*" .. s.qA .. " ->|cff888888总计" .. s.qA .. "|r")
+                    end
+                end
             end
-            for _, mat in ipairs(materialsList) do
-                local displayPrice = mat.unitPrice * scale
-                local pricePart = (displayPrice > 0) and ("(" .. CopperToGold(displayPrice) .. ")") or ""
-                reqStr = reqStr .. mat.itemName .. pricePart .. "*" .. mat.totQty .. " "
-            end
+            
+            reqStr = table.concat(matLines, "\n")
             if reqStr == "" then reqStr = "无" end
             local materialsLine = reqStr
-            if useRouteFragmentCount and seg.fragmentSources and next(seg.fragmentSources) then
+            
+            if routeFragmentCountProvided and seg.fragmentSources and next(seg.fragmentSources) then
                 routeUsesFragmentCount = true
                 local segFragStr = ""
                 for id, qty in pairs(seg.fragmentSources) do
-                    local itemName = (db and db.NameToID) and nil
-                    if not itemName and id then
+                    local itemName = nil
+                    if id then
                         if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(id) end
                         if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
                     end
@@ -1671,13 +1740,11 @@ function L.ShowResultList()
                     fragTotals[id] = { name = itemName, qty = (fragTotals[id] and fragTotals[id].qty or 0) + qty }
                     if not fragOrderSet[id] then fragOrderSet[id] = true; table.insert(fragOrder, id) end
                 end
-                if segFragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. segFragStr end
-                if fragmentCount > 0 and segFragStr == "" then materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. " 碎片" end
-            elseif useRouteFragmentCount and fragmentCount > 0 then
+                -- (We suppress the duplicate fragment list if materialsLine already covers it or just keep it as summary)
+                -- Actually user wants to see it in materials. So I keep logic below for extra clarity if needed.
+                -- if segFragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. segFragStr end
+            elseif routeFragmentCountProvided and fragmentCount > 0 then
                 routeUsesFragmentCount = true
-                materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. " 碎片"
-            elseif fragStr ~= "" then
-                materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
             end
 
             local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
@@ -1694,8 +1761,10 @@ function L.ShowResultList()
 
             local rNameC = (seg.recipe.recipeName or seg.recipe.name) or "?"
             if not seg.recipe.isKnown then
-                rNameC = rNameC .. " |cff888888(获取: " .. (seg.recSource or "未知") .. ")|r"
+                rNameC = "|cffffffff" .. rNameC .. "|r\n|cff888888(" .. (seg.recSource or "未知") .. ")|r"
             end
+            cRecipe:SetText(rNameC)
+            cRecPrice:SetText(CopperToGold(seg.totalRecCost or 0))
 
             local sellbackLabel = useDisenchant and "分解" or "AH"
             local _, breakdown = nil, nil
@@ -1705,35 +1774,50 @@ function L.ShowResultList()
             local deLine = ""
             if useDisenchant and breakdown and #breakdown > 0 then
                 local vendorBetter = (seg.totalSellBackVendor or 0) > (seg.totalSellBackAH or 0)
-                local deLabel = vendorBetter and "分解产物(卖店比分解更划算, 不建议分解)(期望/件): " or "分解产物(期望/件): "
+                local deLabel = vendorBetter and "|cffff4444[卖店优于分解]|r\n" or "分解期望/件:\n"
                 local parts = {}
                 for _, b in ipairs(breakdown) do
                     local q = (b.expectedQty and tonumber(b.expectedQty)) or 0
                     local displayName = (b.itemID and (GetItemInfo(b.itemID) or (db and db.IDToName and db.IDToName[b.itemID]))) or b.name or "?"
-                    local price = (db and db.AHPrices and b.itemID and db.AHPrices[b.itemID]) and db.AHPrices[b.itemID] or 0
-                    parts[#parts + 1] = string.format("%s(%s/个) x%.2f", displayName, CopperToGold(price), q)
+                    parts[#parts + 1] = string.format("%s x%.2f", displayName, q)
                 end
-                deLine = "\n  " .. deLabel .. table.concat(parts, ", ")
+                deLine = "\n|cff888888" .. deLabel .. table.concat(parts, "\n") .. "|r"
             end
-            line:SetText(("[%d-%d] %s x%.0f次\n  配方: %s | 制作(金钱): %s | 制作(碎片): %s | 回血(卖NPC: %s | %s: %s) | 净花费 金钱: %s 碎片: %s\n  材料: %s%s"):format(
-                seg.startSkill, seg.endSkill, rNameC, seg.totalCrafts,
-                CopperToGold(seg.totalRecCost or 0), CopperToGold(goldMat), fragCostStr,
-                CopperToGold(seg.totalSellBackVendor or 0), sellbackLabel, CopperToGold(seg.totalSellBackAH or 0),
-                goldStr, fragCostStr,
-                materialsLine, deLine))
-            line:SetWidth(scroll:GetWidth() - 116)
-            line:Show()
 
-            local currentHeight = line:GetStringHeight()
-            if not currentHeight or currentHeight == 0 then currentHeight = 38 end
+            cMaterials:SetText(materialsLine)
+            
+            local sellInfo = ("卖NPC: %s\n%s: %s"):format(
+                CopperToGold(seg.totalSellBackVendor or 0),
+                sellbackLabel,
+                CopperToGold(useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
+            )
+            cSellback:SetText(sellInfo .. deLine)
+            
+            cProdCost:SetText(CopperToGold((seg.totalRecCost or 0) + goldMat))
+            cNet:SetText(goldStr)
+            cFrag:SetText(fragmentCount > 0 and (tostring(math.floor(fragmentCount+0.5))) or "0")
+
+            local heights = {
+                cRecipe:GetStringHeight(),
+                cRecPrice:GetStringHeight(),
+                cMaterials:GetStringHeight(),
+                cSellback:GetStringHeight(),
+                cProdCost:GetStringHeight(),
+                cNet:GetStringHeight()
+            }
+            local currentHeight = 30
+            for _, h in ipairs(heights) do if h > currentHeight then currentHeight = h end end
+            row:SetHeight(currentHeight + 8)
+
+
             if seg.recipe.createdItemID then
                 if ProfLevelHelperDB.SellBackMethod == "ah" then
                     local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
                     local isBlacklisted = bl[seg.recipe.createdItemID]
                     local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-                    btn:SetSize(78, 18)
-                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 30, -y)
-                    btn:SetText(isBlacklisted and "[改回AH回血]" or "[不按AH回血]")
+                    btn:SetSize(80, 18)
+                    btn:SetPoint("LEFT", row, "TOPLEFT", colX[10], -14)
+                    btn:SetText(isBlacklisted and "开启AH" or "屏蔽AH")
                     btn.itemID = seg.recipe.createdItemID
                     btn:SetScript("OnClick", function()
                         local id = btn.itemID
@@ -1751,10 +1835,10 @@ function L.ShowResultList()
                 else
                     local wl = ProfLevelHelperDB.AHSellBackWhitelist or {}
                     local isWhitelisted = wl[seg.recipe.createdItemID]
-                    local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-                    btn:SetSize(78, 18)
-                    btn:SetPoint("TOPRIGHT", content, "TOPLEFT", scroll:GetWidth() - 30, -y)
-                    btn:SetText(isWhitelisted and "[取消AH回血]" or "[改为AH回血]")
+                    local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+                    btn:SetSize(80, 18)
+                    btn:SetPoint("LEFT", row, "TOPLEFT", colX[10], -14)
+                    btn:SetText(isWhitelisted and "不按AH价格回血" or "按AH价格回血")
                     btn.itemID = seg.recipe.createdItemID
                     btn:SetScript("OnClick", function()
                         local id = btn.itemID
@@ -1771,7 +1855,7 @@ function L.ShowResultList()
                     table.insert(content.segmentBtns, btn)
                 end
             end
-            y = y + currentHeight + 16
+            y = y + currentHeight + 12
         end
 
         -- Build "要买的" in segment order: each unknown recipe immediately followed by its materials.
@@ -2049,10 +2133,8 @@ function L.ShowExportFrame()
                 if not exportFragOrderSet[id] then exportFragOrderSet[id] = true; table.insert(exportFragOrder, id) end
             end
             if segFragStr ~= "" then materialsLine = materialsLine .. " | 碎片兑换: " .. segFragStr end
-            if fragmentCount > 0 and segFragStr == "" then materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. "碎片" end
         elseif useRouteFragmentCount and fragmentCount > 0 then
             exportRouteUsesFragmentCount = true
-            materialsLine = materialsLine .. " | 碎片(本段): " .. tostring(math.floor(fragmentCount + 0.5)) .. "碎片"
         elseif fragStr ~= "" then
             materialsLine = materialsLine .. " | 碎片兑换: " .. fragStr
         end
@@ -2133,7 +2215,147 @@ function L.ShowExportFrame()
     end
 
     local totalFragStr = exportTotalFragments > 0 and (tostring(math.floor(exportTotalFragments + 0.5)) .. "碎片") or "0碎片"
-    local txt = string.format("【ProfLevelHelper】%s冲级路线 (%d -> %d)\n总计 总成本: %s  净成本: %s  碎片: %s\n%s\n%s\nAH data updated: %s\n\n", data.profName, data.startS, data.endS, c2s(exportTotalCost), c2sSigned(exportTotalGold), totalFragStr, buyLineStr, fragLineStr, ahTimeStr) .. bodyTxt
+    
+    -- CSV Generation
+    local function escapeCSV(s)
+        s = tostring(s or "")
+        if s:find('[,"]') or s:find('\n') then
+            s = '"' .. s:gsub('"', '""') .. '"'
+        end
+        return s
+    end
+    
+    local csvLines = {}
+    table.insert(csvLines, "冲级点数,配方名,配方价格,制作次数,材料,回血信息,制作成本,净成本,碎片消耗")
+    
+    local csvTotalQA = {}
+    local csvTotalQF = {}
+    local csvMatNames = {}
+    
+    for _, seg in ipairs(data.route) do
+        -- Gather material details for CSV
+        local matDetailStr = ""
+        local useRouteFragmentCount = (type(seg.fragmentCount) == "number" and seg.fragmentCount >= 0)
+        local fragmentCount = useRouteFragmentCount and seg.fragmentCount or 0
+        local totalTieredCostSeg = 0
+        local matInfos = {}
+        for i, r in ipairs(seg.recipe.reagents or {}) do
+            local id = r.itemID or (db and db.NameToID and db.NameToID[r.name])
+            local itemName = r.name
+            if not itemName and id then
+                if alaAgent and alaAgent.item_name then itemName = alaAgent.item_name(id) end
+                if not itemName then local iname = GetItemInfo(id) if iname then itemName = iname end end
+            end
+            if not itemName then itemName = "ID:" .. tostring(id or r.itemID) end
+            local m = seg.materialDetails and seg.materialDetails[i]
+            local totQty = (m and m.qty ~= nil) and m.qty or ((r.count or 0) * seg.totalCrafts)
+            
+            local qF, qA = 0, 0
+            if useRouteFragmentCount then
+                qF = (seg.fragmentSources and seg.fragmentSources[id]) or 0
+                qA = totQty - qF
+            else
+                local fragCost = (id and db and db.FragmentCosts and db.FragmentCosts[id] and fragVal > 0) and (db.FragmentCosts[id] * fragVal) or 999999999
+                local ahCost = (id and db.AHPrices and db.AHPrices[id] and db.AHPrices[id] > 0) and db.AHPrices[id] or 999999999
+                local vendorCost = (id and ProfLevelHelper_VendorPrices and ProfLevelHelper_VendorPrices[id] and ProfLevelHelper_VendorPrices[id] > 0) and ProfLevelHelper_VendorPrices[id] or 999999999
+                local best = math.min(ahCost, vendorCost, fragCost)
+            if (fragCost < 999999999 and best == fragCost) then qF, qA = totQty, 0 else qF, qA = 0, totQty end
+            end
+            
+            if qA > 0 or qF > 0 then csvMatNames[id] = itemName end
+            csvTotalQA[id] = (csvTotalQA[id] or 0) + qA
+            csvTotalQF[id] = (csvTotalQF[id] or 0) + qF
+            
+            if qF > 0 then
+                local fPerItem = (id and db.FragmentCosts and db.FragmentCosts[id]) or 0
+                matInfos[#matInfos+1] = itemName .. "(" .. (fPerItem * qF) .. "碎片)->总计" .. qF
+            end
+            if qA > 0 then
+                local tiersExport = seg.materialPriceTiers and id and seg.materialPriceTiers[id]
+                if tiersExport and #tiersExport > 0 then
+                    local priceParts = {}
+                    for _, t in ipairs(tiersExport) do priceParts[#priceParts+1] = c2s(t.price) .. "*" .. t.qty end
+                    matInfos[#matInfos+1] = itemName .. "(" .. table.concat(priceParts, " + ") .. ")->总计" .. qA
+                else
+                    local unitPrice = (m and m.unitPrice and m.unitPrice > 0) and m.unitPrice or 0
+                    -- In export we don't scale as easily without re-running segment logic, 
+                    -- but scaleExport is usually 1 if data is consistent.
+                    matInfos[#matInfos+1] = itemName .. "(" .. c2s(unitPrice) .. ")*" .. qA .. "->总计" .. qA
+                end
+            end
+        end
+        matDetailStr = table.concat(matInfos, "\n")
+        
+        local goldMatSeg = (seg.totalMatCost or 0) - fragmentCount * fragVal
+        local useAH = db and ((db.SellBackMethod == "ah" and not (db.AHSellBackBlacklist and seg.recipe.createdItemID and db.AHSellBackBlacklist[seg.recipe.createdItemID])) or (db.SellBackMethod == "vendor" and ((db.AHSellBackWhitelist and seg.recipe.createdItemID and db.AHSellBackWhitelist[seg.recipe.createdItemID]) or (db.UseDisenchantRecovery and L.IsDisenchantable(seg.recipe.createdItemID)))))
+        local useDisenchant = useAH and db and db.UseDisenchantRecovery and seg.recipe.createdItemID and L.IsDisenchantable(seg.recipe.createdItemID)
+        local bestSbExport = (db and db.UseDisenchantRecovery and L.GetBestSellBackPerItem and L.GetBestSellBackPerItem(seg.recipe, db)) or nil
+        local sellback = (bestSbExport and bestSbExport > 0) and (bestSbExport * (seg.recipe.numMade or 1) * seg.totalCrafts) or (useAH and (seg.totalSellBackAH or 0) or (seg.totalSellBackVendor or 0))
+        local segGold = (seg.totalRecCost or 0) + goldMatSeg - sellback
+        
+        local sellbackInfo = "卖NPC:" .. c2s(seg.totalSellBackAH or 0)
+        if useDisenchant then
+            sellbackInfo = sellbackInfo .. "\n分解:" .. c2s(sellback)
+            local vendorBetter = (seg.totalSellBackVendor or 0) > (seg.totalSellBackAH or 0)
+            if vendorBetter then sellbackInfo = sellbackInfo .. "\n(卖店更划算)" end
+        end
+
+        local csvRow = {
+            ("[%d-%d]"):format(seg.startSkill, seg.endSkill),
+            seg.recipe.recipeName or seg.recipe.name or "?",
+            c2s(seg.totalRecCost or 0),
+            seg.totalCrafts,
+            matDetailStr,
+            sellbackInfo,
+            c2s((seg.totalRecCost or 0) + goldMatSeg),
+            c2sSigned(segGold),
+            fragmentCount > 0 and (tostring(math.floor(fragmentCount + 0.5))) or "0"
+        }
+        local escaped = {}
+        for _, v in ipairs(csvRow) do table.insert(escaped, escapeCSV(v)) end
+        table.insert(csvLines, table.concat(escaped, ","))
+    end
+    
+    -- Aggregate all unique materials (buy + frag) for final summary row
+    local buyIds = {}
+    local fragIds = {}
+    for id, qty in pairs(csvTotalQA) do if qty > 0 then table.insert(buyIds, id) end end
+    for id, qty in pairs(csvTotalQF) do if qty > 0 then table.insert(fragIds, id) end end
+    
+    local function getCName(id) return csvMatNames[id] or ("ID:"..tostring(id)) end
+    table.sort(buyIds, function(a, b) return getCName(a) < getCName(b) end)
+    table.sort(fragIds, function(a, b) return getCName(a) < getCName(b) end)
+
+    local buyLines = {}
+    for _, id in ipairs(buyIds) do table.insert(buyLines, getCName(id) .. "*" .. csvTotalQA[id]) end
+    local fragLines = {}
+    for _, id in ipairs(fragIds) do table.insert(fragLines, getCName(id) .. "*" .. csvTotalQF[id]) end
+
+    local buyStr = #buyLines > 0 and ("AH/NPC: " .. table.concat(buyLines, " | ")) or ""
+    local fragStr = #fragLines > 0 and ("碎片兑换: " .. table.concat(fragLines, " | ")) or ""
+    local totalMatSummary = ""
+    if buyStr ~= "" and fragStr ~= "" then totalMatSummary = buyStr .. "\n" .. fragStr
+    elseif buyStr ~= "" then totalMatSummary = buyStr
+    elseif fragStr ~= "" then totalMatSummary = fragStr
+    else totalMatSummary = "-" end
+
+    -- Total Row
+    local totalRow = {
+        "总计",
+        "-",
+        "-",
+        "-",
+        totalMatSummary,
+        "-",
+        c2s(exportTotalCost),
+        c2sSigned(exportTotalGold),
+        tostring(math.floor(exportTotalFragments + 0.5))
+    }
+    local escapedTotal = {}
+    for _, v in ipairs(totalRow) do table.insert(escapedTotal, escapeCSV(v)) end
+    table.insert(csvLines, table.concat(escapedTotal, ","))
+
+    local txt = table.concat(csvLines, "\n")
 
     f.editBox:SetText(txt)
     f.editBox:HighlightText()

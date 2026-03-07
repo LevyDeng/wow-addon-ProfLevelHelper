@@ -942,51 +942,59 @@ function L.GetItemMarginalCost(itemID, qty, materialUsed, prefixCostTable, recip
     local titanCost, titanShards = L.GetTitanMarginalCost(itemID, qty, titanShardsUsed, titanShardsTotal)
     local recipes = recipesProducing and recipesProducing[itemID]
     if not recipes or #recipes == 0 then
-        if buyCost <= titanCost then return buyCost, 0 end
-        return titanCost, titanShards
+        if buyCost <= titanCost then return buyCost, 0, {} end
+        local fqOut = {}; fqOut[itemID] = qty
+        return titanCost, titanShards, fqOut
     end
     visited[itemID] = true
-    local bestCraft, bestCraftShards = math.huge, 0
+    local bestCraft, bestCraftShards, bestCraftFq = math.huge, 0, {}
     for _, rec in ipairs(recipes) do
         local numMade = rec.numMade or 1
         local times = math.ceil(qty / numMade)
-        local cost, shards = 0, 0
+        local cost, shards, fq = 0, 0, {}
         for _, r in ipairs(rec.reagents or {}) do
             local id = r.itemID or (r.name and nameToID and nameToID[r.name])
             if id then
-                local c, s = L.GetItemMarginalCost(id, (r.count or 0) * times, materialUsed, prefixCostTable, recipesProducing, nameToID, visited, titanShardsUsed, titanShardsTotal)
+                local c, s, f = L.GetItemMarginalCost(id, (r.count or 0) * times, materialUsed, prefixCostTable, recipesProducing, nameToID, visited, titanShardsUsed, titanShardsTotal)
                 cost, shards = cost + c, shards + s
+                for k, v in pairs(f or {}) do fq[k] = (fq[k] or 0) + v end
             else
                 cost, shards = math.huge, 0
                 break
             end
         end
-        if cost < bestCraft then bestCraft, bestCraftShards = cost, shards end
+        if cost < bestCraft then bestCraft, bestCraftShards, bestCraftFq = cost, shards, fq end
     end
     visited[itemID] = nil
     local bestCost = math.min(buyCost, titanCost, bestCraft)
     local bestShards = 0
+    local fqOut = {}
     if bestCost == buyCost then bestShards = 0
-    elseif bestCost == titanCost then bestShards = titanShards
-    else bestShards = bestCraftShards
+    elseif bestCost == titanCost then
+        bestShards = titanShards
+        fqOut[itemID] = qty
+    else
+        bestShards = bestCraftShards
+        fqOut = bestCraftFq
     end
-    return bestCost, bestShards
+    return bestCost, bestShards, fqOut
 end
 
 -- Marginal cost for `crafts` crafts of recipe (materials only). Returns cost (copper), shardsUsed.
 function L.GetRecipeMarginalCost(recipe, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal, crafts)
     crafts = crafts or 1
-    local cost, shards = 0, 0
+    local cost, shards, fq = 0, 0, {}
     for _, r in ipairs(recipe.reagents or {}) do
         local id = r.itemID or (r.name and nameToID and nameToID[r.name])
         if id then
-            local c, s = L.GetItemMarginalCost(id, (r.count or 0) * crafts, materialUsed, prefixCostTable, recipesProducing, nameToID, {}, titanShardsUsed, titanShardsTotal)
+            local c, s, f = L.GetItemMarginalCost(id, (r.count or 0) * crafts, materialUsed, prefixCostTable, recipesProducing, nameToID, {}, titanShardsUsed, titanShardsTotal)
             cost, shards = cost + c, shards + s
+            for k, v in pairs(f or {}) do fq[k] = (fq[k] or 0) + v end
         else
-            return math.huge, 0
+            return math.huge, 0, {}
         end
     end
-    return cost, shards
+    return cost, shards, fq
 end
 
 -- Remove dominated options: if A.shardsUsed >= B.shardsUsed and A.cost >= B.cost then A is dominated.
@@ -1155,21 +1163,23 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
                 if chance > 0 then
                     local learnCost = (not learnedRecipes[rec.name] and not rec.isKnown) and (rec.acqCost or 0) or 0
                     local craftsThisStep = math.ceil(1 / chance)
-                    local craftCost, craftShards = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal, craftsThisStep)
+                    local craftCost, craftShards, craftFq = L.GetRecipeMarginalCost(rec, materialUsed, prefixCostTable, recipesProducing, nameToID, titanShardsUsed, titanShardsTotal, craftsThisStep)
                     -- Fragment limit: do not pick recipe if this step would exceed available fragments.
                     if titanShardsTotal and (titanShardsUsed + (craftShards or 0)) > titanShardsTotal then
                         craftCost = math.huge
                         craftShards = 0
+                        craftFq = {}
                     end
                     local totalCost = learnCost + craftCost
                     local costPerSkill = totalCost
                     if not bestRec or costPerSkill < bestCostPerSkill then
                         bestRec, bestCostPerSkill, bestChance = rec, costPerSkill, chance
-                        bestCraftCost, bestCraftShards = craftCost, craftShards
+                        bestCraftCost, bestCraftShards, bestCraftFq = craftCost, craftShards, craftFq
                     end
                 end
             end
         end
+
         if not bestRec then break end
 
         local rec = bestRec
@@ -1197,6 +1207,7 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
             craftCost = bestCraftCost or 0,
             craftShards = bestCraftShards or 0,
             chance = bestChance,
+            fragmentQty = bestCraftFq,
         }
     end
 
@@ -1218,9 +1229,13 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
         local usedStart = firstStep.materialUsedBefore
         local totalMatCost = 0
         local totalFragmentsSeg = 0
+        local fragmentSources = {}
         for s = segStart, segEnd do
             totalMatCost = totalMatCost + (steps[s].craftCost or 0)
             totalFragmentsSeg = totalFragmentsSeg + (steps[s].craftShards or 0)
+            for id, qty in pairs(steps[s].fragmentQty or {}) do
+                fragmentSources[id] = (fragmentSources[id] or 0) + qty
+            end
         end
         local materialDetails = {}
         for _, r in ipairs(rec.reagents or {}) do
@@ -1261,6 +1276,7 @@ function L.RunGreedyTieredOptimizer(filteredRecipes, targetStart, targetEnd, db,
             segmentTotalCost    = recCostOnce + totalMatCost - sellBack,
             materialDetails     = materialDetails,
             fragmentCount       = totalFragmentsSeg,
+            fragmentSources     = fragmentSources,
         })
     end
 
