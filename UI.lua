@@ -1779,9 +1779,9 @@ function L.ShowResultList()
             cRecipe:SetText(rNameC)
             cRecPrice:SetText(CopperToGold(seg.totalRecCost or 0))
 
-            local _, breakdown = nil, nil
+            local deVal, breakdown = nil, nil
             if L.GetDisenchantValueAndBreakdown and seg.recipe.createdItemID then
-                _, breakdown = L.GetDisenchantValueAndBreakdown(seg.recipe.createdItemID)
+                deVal, breakdown = L.GetDisenchantValueAndBreakdown(seg.recipe.createdItemID)
             end
             local deLine = ""
             if useDisenchant and breakdown and #breakdown > 0 then
@@ -1798,13 +1798,13 @@ function L.ShowResultList()
 
             cMaterials:SetText(materialsLine)
             
-            -- Always show both vendor and AH recovery (same as CSV); when disenchant recovery, add one line for disenchant total
+            -- Always show both vendor and AH recovery (same as CSV); when disenchant, show actual disenchant total (use deVal, not bestSb which is max(vendor,de))
             local sellInfo = ("卖NPC: %s\nAH: %s"):format(
                 CopperToGold(seg.totalSellBackVendor or 0),
                 CopperToGold(seg.totalSellBackAH or 0)
             )
-            if useDisenchant and bestSb and bestSb > 0 then
-                local totalDE = bestSb * (seg.recipe.numMade or 1) * seg.totalCrafts
+            if useDisenchant and deVal and type(deVal) == "number" and deVal > 0 then
+                local totalDE = deVal * (seg.recipe.numMade or 1) * seg.totalCrafts
                 sellInfo = sellInfo .. "\n分解: " .. CopperToGold(totalDE)
             end
             cSellback:SetText(sellInfo .. deLine)
