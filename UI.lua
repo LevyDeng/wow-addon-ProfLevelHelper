@@ -225,6 +225,26 @@ function L.OpenOptions()
     local f = L.OptionsFrame or CreateFrame("Frame", "ProfLevelHelperOptions", UIParent, "BackdropTemplate")
     L.OptionsFrame = f
     f:SetSize(420, 455)
+    -- Pending options: only apply to DB on 确认; 取消 discards. Init from current DB each time we open.
+    local db = ProfLevelHelperDB
+    f.pending = {
+        IncludeHolidayRecipes = db.IncludeHolidayRecipes,
+        TargetSkillStart = db.TargetSkillStart or 1,
+        TargetSkillEnd = db.TargetSkillEnd or 450,
+        IgnoredOutlierPercent = db.IgnoredOutlierPercent ~= nil and db.IgnoredOutlierPercent or 0.10,
+        MinAHQuantity = db.MinAHQuantity or 50,
+        FragmentValueInCopper = db.FragmentValueInCopper or 800,
+        AvailableTitanFragments = db.AvailableTitanFragments,
+        SellBackMethod = db.SellBackMethod or "vendor",
+        UseDisenchantRecovery = db.UseDisenchantRecovery == true,
+        UseTieredPricing = db.UseTieredPricing == true,
+        IncludeSourceTrainer = db.IncludeSourceTrainer ~= false,
+        IncludeSourceAH = db.IncludeSourceAH ~= false,
+        IncludeSourceVendor = db.IncludeSourceVendor == true,
+        IncludeSourceQuest = db.IncludeSourceQuest == true,
+        IncludeSourceUnknown = db.IncludeSourceUnknown == true,
+        ExcludeCooldownRecipes = db.ExcludeCooldownRecipes == true,
+    }
     f:SetPoint("CENTER")
     f:SetFrameStrata("DIALOG")
     -- Make sure it floats visually above ResultFrame
@@ -264,10 +284,9 @@ function L.OpenOptions()
 
     local cb = f.checkHoliday or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cb:SetPoint("TOPLEFT", 24, -40)
-    cb:SetChecked(ProfLevelHelperDB.IncludeHolidayRecipes)
+    cb:SetChecked(f.pending.IncludeHolidayRecipes)
     cb:SetScript("OnClick", function()
-        ProfLevelHelperDB.IncludeHolidayRecipes = cb:GetChecked()
-        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        f.pending.IncludeHolidayRecipes = cb:GetChecked()
     end)
     f.checkHoliday = cb
     local cbLabel = cb.label or cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -285,13 +304,10 @@ function L.OpenOptions()
     startInput:SetPoint("LEFT", startLabel, "RIGHT", 10, 0)
     startInput:SetAutoFocus(false)
     startInput:SetNumeric(true)
-    startInput:SetText(tostring(ProfLevelHelperDB.TargetSkillStart or 1))
+    startInput:SetText(tostring(f.pending.TargetSkillStart))
     startInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
-        if val then 
-            ProfLevelHelperDB.TargetSkillStart = val 
-            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
-        end
+        if val then f.pending.TargetSkillStart = val end
     end)
     f.startInput = startInput
 
@@ -305,13 +321,10 @@ function L.OpenOptions()
     endInput:SetPoint("LEFT", endLabel, "RIGHT", 10, 0)
     endInput:SetAutoFocus(false)
     endInput:SetNumeric(true)
-    endInput:SetText(tostring(ProfLevelHelperDB.TargetSkillEnd or 450))
+    endInput:SetText(tostring(f.pending.TargetSkillEnd))
     endInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
-        if val then 
-            ProfLevelHelperDB.TargetSkillEnd = val 
-            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
-        end
+        if val then f.pending.TargetSkillEnd = val end
     end)
     f.endInput = endInput
 
@@ -325,19 +338,13 @@ function L.OpenOptions()
     pctInput:SetPoint("LEFT", pctLabel, "RIGHT", 10, 0)
     pctInput:SetAutoFocus(false)
     pctInput:SetNumeric(true)
-    local currPct = ProfLevelHelperDB.IgnoredOutlierPercent
-    if currPct == nil then currPct = 0.10 end
-    if currPct > 1 then
-        ProfLevelHelperDB.IgnoredOutlierPercent = currPct / 100
-        currPct = currPct / 100
-    end
+    local currPct = f.pending.IgnoredOutlierPercent
+    if currPct > 1 then currPct = currPct / 100 end
     currPct = math.max(0, math.min(100, math.floor(currPct * 100)))
     pctInput:SetText(tostring(currPct))
     pctInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
-        if val then 
-            ProfLevelHelperDB.IgnoredOutlierPercent = val / 100.0 
-        end
+        if val then f.pending.IgnoredOutlierPercent = val / 100.0 end
     end)
     f.pctInput = pctInput
 
@@ -351,13 +358,10 @@ function L.OpenOptions()
     minQtyInput:SetPoint("LEFT", minQtyLabel, "RIGHT", 10, 0)
     minQtyInput:SetAutoFocus(false)
     minQtyInput:SetNumeric(true)
-    minQtyInput:SetText(tostring(ProfLevelHelperDB.MinAHQuantity or 50))
+    minQtyInput:SetText(tostring(f.pending.MinAHQuantity))
     minQtyInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
-        if val and val >= 0 then
-            ProfLevelHelperDB.MinAHQuantity = val
-            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
-        end
+        if val and val >= 0 then f.pending.MinAHQuantity = val end
     end)
     f.minQtyInput = minQtyInput
 
@@ -371,13 +375,10 @@ function L.OpenOptions()
     fragInput:SetPoint("LEFT", fragLabel, "RIGHT", 10, 0)
     fragInput:SetAutoFocus(false)
     fragInput:SetNumeric(true)
-    fragInput:SetText(tostring(ProfLevelHelperDB.FragmentValueInCopper or 800))
+    fragInput:SetText(tostring(f.pending.FragmentValueInCopper))
     fragInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
-        if val and val >= 0 then
-            ProfLevelHelperDB.FragmentValueInCopper = val
-            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
-        end
+        if val and val >= 0 then f.pending.FragmentValueInCopper = val end
     end)
     f.fragInput = fragInput
     local fragValueBtn = f.fragValueBtn or CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -399,15 +400,14 @@ function L.OpenOptions()
     fragCapInput:SetPoint("LEFT", fragCapLabel, "RIGHT", 10, 0)
     fragCapInput:SetAutoFocus(false)
     fragCapInput:SetNumeric(true)
-    fragCapInput:SetText(ProfLevelHelperDB.AvailableTitanFragments and tostring(ProfLevelHelperDB.AvailableTitanFragments) or "")
+    fragCapInput:SetText(f.pending.AvailableTitanFragments and tostring(f.pending.AvailableTitanFragments) or "")
     fragCapInput:SetScript("OnTextChanged", function(self)
         local val = tonumber(self:GetText())
         if self:GetText():match("^%s*$") then
-            ProfLevelHelperDB.AvailableTitanFragments = nil
+            f.pending.AvailableTitanFragments = nil
         elseif val and val >= 0 then
-            ProfLevelHelperDB.AvailableTitanFragments = math.floor(val)
+            f.pending.AvailableTitanFragments = math.floor(val)
         end
-        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
     end)
     f.fragCapInput = fragCapInput
 
@@ -418,11 +418,10 @@ function L.OpenOptions()
     f.sellBackLabel = sellBackLabel
     local cbVendor = f.cb_sellBackVendor or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cbVendor:SetPoint("LEFT", sellBackLabel, "RIGHT", 8, 0)
-    cbVendor:SetChecked(ProfLevelHelperDB.SellBackMethod ~= "ah")
+    cbVendor:SetChecked(f.pending.SellBackMethod ~= "ah")
     cbVendor:SetScript("OnClick", function()
-        ProfLevelHelperDB.SellBackMethod = "vendor"
+        f.pending.SellBackMethod = "vendor"
         if f.cb_sellBackAH then f.cb_sellBackAH:SetChecked(false) end
-        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
     end)
     f.cb_sellBackVendor = cbVendor
     local lblV = cbVendor:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -430,11 +429,10 @@ function L.OpenOptions()
     lblV:SetText("卖店")
     local cbAH = f.cb_sellBackAH or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cbAH:SetPoint("LEFT", lblV, "RIGHT", 16, 0)
-    cbAH:SetChecked(ProfLevelHelperDB.SellBackMethod == "ah")
+    cbAH:SetChecked(f.pending.SellBackMethod == "ah")
     cbAH:SetScript("OnClick", function()
-        ProfLevelHelperDB.SellBackMethod = "ah"
+        f.pending.SellBackMethod = "ah"
         if f.cb_sellBackVendor then f.cb_sellBackVendor:SetChecked(false) end
-        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
     end)
     f.cb_sellBackAH = cbAH
     local lblA = cbAH:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -444,11 +442,9 @@ function L.OpenOptions()
     -- Disenchant recovery: use Auctionator disenchant value as AH sellback when enabled (black/whitelist still apply)
     local cbDE = f.cb_UseDisenchantRecovery or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cbDE:SetPoint("TOPLEFT", 24, -252)
-    if ProfLevelHelperDB.UseDisenchantRecovery == nil then ProfLevelHelperDB.UseDisenchantRecovery = false end
-    cbDE:SetChecked(ProfLevelHelperDB.UseDisenchantRecovery)
+    cbDE:SetChecked(f.pending.UseDisenchantRecovery)
     cbDE:SetScript("OnClick", function()
-        ProfLevelHelperDB.UseDisenchantRecovery = cbDE:GetChecked()
-        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+        f.pending.UseDisenchantRecovery = cbDE:GetChecked()
     end)
     f.cb_UseDisenchantRecovery = cbDE
     local lblDE = cbDE.label or cbDE:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -504,11 +500,9 @@ function L.OpenOptions()
         cb:SetPoint("TOPLEFT", lastCbAnchor, "BOTTOMLEFT", 0, -gap)
         lastCbAnchor = cb
         gap = (key == "UseTieredPricing") and 47 or 25
-        if ProfLevelHelperDB[key] == nil then ProfLevelHelperDB[key] = false end
-        cb:SetChecked(ProfLevelHelperDB[key])
+        cb:SetChecked(f.pending[key])
         cb:SetScript("OnClick", function()
-            ProfLevelHelperDB[key] = cb:GetChecked()
-            if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+            f.pending[key] = cb:GetChecked()
         end)
         f["cb_"..key] = cb
         local cbLabel = cb.label or cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -571,20 +565,40 @@ function L.OpenOptions()
     feedback:SetText("反馈邮箱: ptrees@126.com")
     f.feedbackText = feedback
 
-    local close = f.closeBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    close:SetSize(100, 22)
-    close:SetPoint("BOTTOM", 0, 16)
-    close:SetText("关闭")
-    close:SetScript("OnClick", function() f:Hide() end)
-    f.closeBtn = close
-
-    if f.cb_sellBackVendor and f.cb_sellBackAH then
-        f.cb_sellBackVendor:SetChecked(ProfLevelHelperDB.SellBackMethod ~= "ah")
-        f.cb_sellBackAH:SetChecked(ProfLevelHelperDB.SellBackMethod == "ah")
-    end
-    if f.cb_UseDisenchantRecovery then
-        f.cb_UseDisenchantRecovery:SetChecked(ProfLevelHelperDB.UseDisenchantRecovery)
-    end
+    local confirmBtn = f.confirmBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    confirmBtn:SetSize(80, 22)
+    confirmBtn:SetPoint("BOTTOM", 40, 16)
+    confirmBtn:SetText("确认")
+    confirmBtn:SetScript("OnClick", function()
+        local p = f.pending
+        if p then
+            ProfLevelHelperDB.IncludeHolidayRecipes = p.IncludeHolidayRecipes
+            ProfLevelHelperDB.TargetSkillStart = p.TargetSkillStart
+            ProfLevelHelperDB.TargetSkillEnd = p.TargetSkillEnd
+            ProfLevelHelperDB.IgnoredOutlierPercent = p.IgnoredOutlierPercent
+            ProfLevelHelperDB.MinAHQuantity = p.MinAHQuantity
+            ProfLevelHelperDB.FragmentValueInCopper = p.FragmentValueInCopper
+            ProfLevelHelperDB.AvailableTitanFragments = p.AvailableTitanFragments
+            ProfLevelHelperDB.SellBackMethod = p.SellBackMethod
+            ProfLevelHelperDB.UseDisenchantRecovery = p.UseDisenchantRecovery
+            ProfLevelHelperDB.UseTieredPricing = p.UseTieredPricing
+            ProfLevelHelperDB.IncludeSourceTrainer = p.IncludeSourceTrainer
+            ProfLevelHelperDB.IncludeSourceAH = p.IncludeSourceAH
+            ProfLevelHelperDB.IncludeSourceVendor = p.IncludeSourceVendor
+            ProfLevelHelperDB.IncludeSourceQuest = p.IncludeSourceQuest
+            ProfLevelHelperDB.IncludeSourceUnknown = p.IncludeSourceUnknown
+            ProfLevelHelperDB.ExcludeCooldownRecipes = p.ExcludeCooldownRecipes
+        end
+        f:Hide()
+        if L.ResultFrame and L.ResultFrame:IsShown() then L.ShowResultList() end
+    end)
+    f.confirmBtn = confirmBtn
+    local cancelBtn = f.cancelBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    cancelBtn:SetSize(80, 22)
+    cancelBtn:SetPoint("BOTTOM", -40, 16)
+    cancelBtn:SetText("取消")
+    cancelBtn:SetScript("OnClick", function() f:Hide() end)
+    f.cancelBtn = cancelBtn
     local nBl = 0
     if ProfLevelHelperDB.AHSellBackBlacklist then
         for _ in pairs(ProfLevelHelperDB.AHSellBackBlacklist) do nBl = nBl + 1 end
@@ -604,7 +618,6 @@ function L.OpenOptions()
         for _ in pairs(ProfLevelHelperDB.KnownCooldownSpellIDs) do nKnownCd = nKnownCd + 1 end
     end
     if f.knownCdCountText then f.knownCdCountText:SetText("已添加 " .. nKnownCd .. " 种(法术ID)") end
-    if f.cb_ExcludeCooldownRecipes then f.cb_ExcludeCooldownRecipes:SetChecked(ProfLevelHelperDB.ExcludeCooldownRecipes) end
     L.UpdateScanButtonState()
     f:Show()
 end
