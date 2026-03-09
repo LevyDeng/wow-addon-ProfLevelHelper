@@ -1622,7 +1622,12 @@ function L.ShowResultList()
             end
 
             local cSkill = CreateRowCol(colX[1], colW[1])
-            cSkill:SetText(("[%d-%d]"):format(seg.startSkill, seg.endSkill))
+            local skillCaps = { 75, 150, 225, 300, 375 }
+            local needCapWarning = false
+            for _, cap in ipairs(skillCaps) do
+                if seg.startSkill <= cap and cap <= seg.endSkill then needCapWarning = true; break end
+            end
+            cSkill:SetText(("[%d-%d]"):format(seg.startSkill, seg.endSkill) .. (needCapWarning and ("\n" .. "|cffff0000注意突破上限|r") or ""))
 
             local cRecipe = CreateRowCol(colX[2], colW[2])
             local cRecPrice = CreateRowCol(colX[3], colW[3])
