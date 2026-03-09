@@ -599,6 +599,15 @@ function L.OpenOptions()
     cancelBtn:SetText("取消")
     cancelBtn:SetScript("OnClick", function() f:Hide() end)
     f.cancelBtn = cancelBtn
+
+    local guideBtn = f.guideBtn or CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    guideBtn:SetSize(80, 22)
+    guideBtn:SetPoint("BOTTOMLEFT", 20, 16)
+    guideBtn:SetText("使用说明")
+    guideBtn:SetScript("OnClick", function()
+        if L.ShowGuide then L.ShowGuide() end
+    end)
+    f.guideBtn = guideBtn
     local nBl = 0
     if ProfLevelHelperDB.AHSellBackBlacklist then
         for _ in pairs(ProfLevelHelperDB.AHSellBackBlacklist) do nBl = nBl + 1 end
@@ -619,6 +628,73 @@ function L.OpenOptions()
     end
     if f.knownCdCountText then f.knownCdCountText:SetText("已添加 " .. nKnownCd .. " 种(法术ID)") end
     L.UpdateScanButtonState()
+    f:Show()
+end
+
+-- In-game getting started guide (content from README)
+local GUIDE_TEXT = "|cffffcc00原理|r\n" ..
+    "获取拍卖行所有价格数据，根据价格切片算出该价格下最省钱的冲专业路线。\n\n" ..
+    "|cffffcc00使用方法|r\n" ..
+    "1. 插件全关，只留 ala 商业技能助手 和本插件；若需使用附魔回血功能，还需开启 Auctionator 插件。\n" ..
+    "2. 打开拍卖行页面，点击上方的 「ProfLevelHelper 扫描」 按钮。\n" ..
+    "3. 等待扫描完成（会有点卡，属正常现象）。\n" ..
+    "4. 扫描完成后，打开专业技能页面，点击 「冲点助手」 按钮即可看到冲点规划。\n" ..
+    "5. 可在选项中修改配置，以选择适合自己的计算方式。"
+
+function L.ShowGuide()
+    if L.GuideFrame and L.GuideFrame:IsShown() then
+        L.GuideFrame:Hide()
+        return
+    end
+    local f = L.GuideFrame
+    if not f then
+        f = CreateFrame("Frame", "ProfLevelHelperGuide", UIParent, "BackdropTemplate")
+        L.GuideFrame = f
+        f:SetSize(400, 380)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        if L.OptionsFrame then f:SetFrameLevel(L.OptionsFrame:GetFrameLevel() + 5) end
+        f:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("入门说明")
+        f.title = title
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 16, -36)
+        scroll:SetPoint("BOTTOMRIGHT", -32, 46)
+        local content = CreateFrame("Frame", nil, scroll)
+        content:SetSize(scroll:GetWidth() - 24, 1)
+        scroll:SetScrollChild(content)
+        local body = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        body:SetPoint("TOPLEFT", 0, 0)
+        body:SetWidth(content:GetWidth() - 8)
+        body:SetWordWrap(true)
+        body:SetNonSpaceWrap(true)
+        body:SetText(GUIDE_TEXT)
+        body:SetJustifyH("LEFT")
+        body:SetJustifyV("TOP")
+        f.guideBody = body
+        f.guideContent = content
+        f.guideScroll = scroll
+        local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        closeBtn:SetSize(80, 22)
+        closeBtn:SetPoint("BOTTOM", 0, 12)
+        closeBtn:SetText("关闭")
+        closeBtn:SetScript("OnClick", function() f:Hide() end)
+    end
+    f.guideBody:SetText(GUIDE_TEXT)
+    f.guideContent:SetHeight(f.guideBody:GetStringHeight() + 20)
     f:Show()
 end
 

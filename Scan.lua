@@ -15,7 +15,7 @@ local processedIndexes = {}
 local globalUpdatedCount = 0
 
 StaticPopupDialogs["PROFLEVELHELPER_SCAN_CONFIRM"] = {
-    text = "|cffff2020警告！|r\n\n本操作将自动全量扫描拍卖行所有物品！\n\n在扫描开始期间（向服务器请求完整数据列表时），游戏画面会发生短暂冻结，这是魔兽世界引擎的正常现象。\n\n此操作可能耗时数秒到十几秒，请确认你已准备好开始扫描。",
+    text = "|cffff2020警告！|r\n\n本操作将自动全量扫描拍卖行所有物品！\n建议关闭所有其他插件避免卡顿(除了ala商业技能助手和Auctionator)。\n\n在扫描开始期间（向服务器请求完整数据列表时），游戏画面会发生短暂冻结，这是魔兽世界引擎的正常现象。\n\n此操作可能耗时数十秒到几分钟，请确认你已准备好开始扫描。",
     button1 = "继续",
     button2 = "取消",
     OnAccept = function()
