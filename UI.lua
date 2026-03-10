@@ -1803,9 +1803,14 @@ function L.ShowResultList()
                         local parts = {}
                         local currentAHTotal = 0
                         for _, t in ipairs(tiers) do
+                            if currentAHTotal >= s.qA then break end
+                            local tierQty = t.qty or 0
+                            local remain = s.qA - currentAHTotal
+                            if tierQty > remain then tierQty = remain end
+                            if tierQty <= 0 then break end
                             local pricePart = (t.price and t.price > 0) and ("(" .. CopperToGold(t.price) .. ")") or ""
-                            parts[#parts + 1] = pricePart .. "*" .. (t.qty or 0)
-                            currentAHTotal = currentAHTotal + (t.qty or 0)
+                            parts[#parts + 1] = pricePart .. "*" .. tierQty
+                            currentAHTotal = currentAHTotal + tierQty
                         end
                         table.insert(matLines, s.itemName .. " " .. table.concat(parts, " ") .. " ->|cff888888总计" .. currentAHTotal .. "|r")
                     else
@@ -2159,7 +2164,12 @@ function L.ShowExportFrame()
                 local tierCost = 0
                 for _, t in ipairs(tiersExport) do tierCost = tierCost + (t.price or 0) * (t.qty or 0) end
                 totalTieredCostExport = totalTieredCostExport + tierCost
-                tieredMaterialsListExport[#tieredMaterialsListExport + 1] = { itemName = itemName, tiers = tiersExport }
+                local qAExport = totQty
+                if useRouteFragmentCount and seg.fragmentSources and id then
+                    local qF = (seg.fragmentSources[id]) or 0
+                    qAExport = totQty - qF
+                end
+                tieredMaterialsListExport[#tieredMaterialsListExport + 1] = { itemName = itemName, tiers = tiersExport, qA = qAExport }
             else
                 totalRefCost = totalRefCost + unitPrice * totQty
                 materialsListExport[#materialsListExport + 1] = { itemName = itemName, totQty = totQty, unitPrice = unitPrice }
@@ -2202,9 +2212,19 @@ function L.ShowExportFrame()
         local scaleExport = (totalRefCost and totalRefCost > 0 and (goldMatExport - totalTieredCostExport) >= 0) and ((goldMatExport - totalTieredCostExport) / totalRefCost) or 1
         for _, mat in ipairs(tieredMaterialsListExport) do
             local parts = {}
+            local qACap = (mat.qA ~= nil) and mat.qA or nil
+            local currentAHTotal = 0
             for _, t in ipairs(mat.tiers) do
+                if qACap and currentAHTotal >= qACap then break end
+                local tierQty = t.qty or 0
+                if qACap then
+                    local remain = qACap - currentAHTotal
+                    if tierQty > remain then tierQty = remain end
+                    if tierQty <= 0 then break end
+                    currentAHTotal = currentAHTotal + tierQty
+                end
                 local pricePart = (t.price and t.price > 0) and ("(" .. c2s(t.price) .. ")") or ""
-                parts[#parts + 1] = pricePart .. "*" .. (t.qty or 0)
+                parts[#parts + 1] = pricePart .. "*" .. tierQty
             end
             reqStr = reqStr .. mat.itemName .. " " .. table.concat(parts, " ") .. " "
         end
@@ -2371,8 +2391,17 @@ function L.ShowExportFrame()
                 local tiersExport = seg.materialPriceTiers and id and seg.materialPriceTiers[id]
                 if tiersExport and #tiersExport > 0 then
                     local priceParts = {}
-                    for _, t in ipairs(tiersExport) do priceParts[#priceParts+1] = c2s(t.price) .. "*" .. t.qty end
-                    matInfos[#matInfos+1] = itemName .. "(" .. table.concat(priceParts, " + ") .. ")->总计" .. qA
+                    local currentAHTotal = 0
+                    for _, t in ipairs(tiersExport) do
+                        if currentAHTotal >= qA then break end
+                        local tierQty = t.qty or 0
+                        local remain = qA - currentAHTotal
+                        if tierQty > remain then tierQty = remain end
+                        if tierQty <= 0 then break end
+                        priceParts[#priceParts+1] = c2s(t.price) .. "*" .. tierQty
+                        currentAHTotal = currentAHTotal + tierQty
+                    end
+                    matInfos[#matInfos+1] = itemName .. "(" .. table.concat(priceParts, " + ") .. ")->总计" .. currentAHTotal
                 else
                     local unitPrice = (m and m.unitPrice and m.unitPrice > 0) and m.unitPrice or 0
                     -- In export we don't scale as easily without re-running segment logic, 
