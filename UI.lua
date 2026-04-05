@@ -699,8 +699,16 @@ function L.ShowGuide()
 end
 
 -- Blacklist detail UI: list each blacklisted item with [Remove], and [Clear all] button
-function L.ShowAHSellBackBlacklistDetail()
+function L.ShowAHSellBackBlacklistDetail(forceRefresh)
     local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
+    if not forceRefresh and C_Timer and C_Timer.After then
+        for id in pairs(bl) do GetItemInfo(id) end
+        C_Timer.After(0.5, function()
+            if L.BlacklistDetailFrame and L.BlacklistDetailFrame:IsShown() then
+                L.ShowAHSellBackBlacklistDetail(true)
+            end
+        end)
+    end
     local list = {}
     for id in pairs(bl) do list[#list + 1] = id end
     table.sort(list)
@@ -852,8 +860,16 @@ function L.ShowAHSellBackBlacklistDetail()
 end
 
 -- Whitelist detail UI: list + manual add + clear
-function L.ShowAHSellBackWhitelistDetail()
+function L.ShowAHSellBackWhitelistDetail(forceRefresh)
     local wl = ProfLevelHelperDB.AHSellBackWhitelist or {}
+    if not forceRefresh and C_Timer and C_Timer.After then
+        for id in pairs(wl) do GetItemInfo(id) end
+        C_Timer.After(0.5, function()
+            if L.WhitelistDetailFrame and L.WhitelistDetailFrame:IsShown() then
+                L.ShowAHSellBackWhitelistDetail(true)
+            end
+        end)
+    end
     local list = {}
     for id in pairs(wl) do list[#list + 1] = id end
     table.sort(list)
@@ -1005,8 +1021,17 @@ function L.ShowAHSellBackWhitelistDetail()
 end
 
 -- Recipe blacklist detail: type selector (spell/item/name) then input, list all three.
-function L.ShowCooldownBlacklistDetail()
+function L.ShowCooldownBlacklistDetail(forceRefresh)
     local bl = ProfLevelHelperDB.RecipeBlacklist or { spell = {}, item = {}, name = {} }
+    if not forceRefresh and C_Timer and C_Timer.After then
+        if bl.item then for id in pairs(bl.item) do GetItemInfo(id) end end
+        if bl.spell then for id in pairs(bl.spell) do if GetSpellInfo then GetSpellInfo(id) end end end
+        C_Timer.After(0.5, function()
+            if L.CooldownBlacklistDetailFrame and L.CooldownBlacklistDetailFrame:IsShown() then
+                L.ShowCooldownBlacklistDetail(true)
+            end
+        end)
+    end
     local list = L.RecipeListEntries(bl)
 
     local f = L.CooldownBlacklistDetailFrame
@@ -1183,8 +1208,17 @@ function L.ShowCooldownBlacklistDetail()
 end
 
 -- Recipe whitelist detail: type selector (spell/item/name) then input, list all three.
-function L.ShowCooldownWhitelistDetail()
+function L.ShowCooldownWhitelistDetail(forceRefresh)
     local wl = ProfLevelHelperDB.RecipeWhitelist or { spell = {}, item = {}, name = {} }
+    if not forceRefresh and C_Timer and C_Timer.After then
+        if wl.item then for id in pairs(wl.item) do GetItemInfo(id) end end
+        if wl.spell then for id in pairs(wl.spell) do if GetSpellInfo then GetSpellInfo(id) end end end
+        C_Timer.After(0.5, function()
+            if L.CooldownWhitelistDetailFrame and L.CooldownWhitelistDetailFrame:IsShown() then
+                L.ShowCooldownWhitelistDetail(true)
+            end
+        end)
+    end
     local list = L.RecipeListEntries(wl)
 
     local f = L.CooldownWhitelistDetailFrame
@@ -1912,6 +1946,7 @@ function L.ShowResultList()
             row:SetHeight(currentHeight + 8)
 
 
+            local hasAHBtn = false
             if seg.recipe.createdItemID then
                 if ProfLevelHelperDB.SellBackMethod == "ah" then
                     local bl = ProfLevelHelperDB.AHSellBackBlacklist or {}
@@ -1919,7 +1954,7 @@ function L.ShowResultList()
                     local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
                     btn:SetSize(80, 18)
                     btn:SetPoint("LEFT", row, "TOPLEFT", colX[10], -14)
-                    btn:SetText(isBlacklisted and "开启AH" or "屏蔽AH")
+                    btn:SetText(isBlacklisted and "按AH价格回血" or "不按AH价格回血")
                     btn.itemID = seg.recipe.createdItemID
                     btn:SetScript("OnClick", function()
                         local id = btn.itemID
@@ -1934,10 +1969,11 @@ function L.ShowResultList()
                     end)
                     btn:Show()
                     table.insert(content.segmentBtns, btn)
+                    hasAHBtn = true
                 else
                     local wl = ProfLevelHelperDB.AHSellBackWhitelist or {}
                     local isWhitelisted = wl[seg.recipe.createdItemID]
-                    local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+                    local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
                     btn:SetSize(80, 18)
                     btn:SetPoint("LEFT", row, "TOPLEFT", colX[10], -14)
                     btn:SetText(isWhitelisted and "不按AH价格回血" or "按AH价格回血")
@@ -1955,6 +1991,38 @@ function L.ShowResultList()
                     end)
                     btn:Show()
                     table.insert(content.segmentBtns, btn)
+                    hasAHBtn = true
+                end
+            end
+
+            if seg.recipe then
+                local recName = seg.recipe.recipeName or seg.recipe.name
+                if recName then
+                    local banBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+                    banBtn:SetSize(75, 18)
+                    if hasAHBtn then
+                        banBtn:SetPoint("LEFT", row, "TOPLEFT", colX[10], -34)
+                        if currentHeight < 44 then
+                            currentHeight = 44
+                            row:SetHeight(currentHeight + 8)
+                        end
+                    else
+                        banBtn:SetPoint("LEFT", row, "TOPLEFT", colX[10], -14)
+                    end
+                    banBtn:SetText("禁用此配方")
+                    banBtn:SetScript("OnClick", function()
+                        local db = ProfLevelHelperDB
+                        if not db.RecipeBlacklist then db.RecipeBlacklist = { spell = {}, item = {}, name = {} } end
+                        if not db.RecipeBlacklist.name then db.RecipeBlacklist.name = {} end
+                        db.RecipeBlacklist.name[recName] = true
+                        local opt = L.OptionsFrame
+                        if opt and opt.cdBlCountText then
+                            opt.cdBlCountText:SetText("已屏蔽 " .. L.RecipeListCount(db.RecipeBlacklist) .. " 种")
+                        end
+                        L.ShowResultList()
+                    end)
+                    banBtn:Show()
+                    table.insert(content.segmentBtns, banBtn)
                 end
             end
             y = y + currentHeight + 12
