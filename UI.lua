@@ -277,7 +277,7 @@ function L.OpenOptions()
 
     local title = f.title or f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16)
-    title:SetText("ProfLevelHelper (设置选项)")
+    title:SetText("ProfLevelHelper (冲点助手设置)")
     f.title = title
 
     L.ScanAHButton = nil
@@ -2568,6 +2568,16 @@ local function CreateTradeSkillButton()
     btn:SetScript("OnClick", function()
         L.ShowResultList()
     end)
+
+    local optBtn = CreateFrame("Button", "ProfLevelHelperOptionsBtn", TradeSkillFrame)
+    optBtn:SetSize(24, 24)
+    optBtn:SetPoint("RIGHT", btn, "LEFT", -4, 0)
+    optBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+    optBtn:SetHighlightTexture("Interface\\Buttons\\UI-OptionsButton", "ADD")
+    optBtn:SetScript("OnClick", function()
+        L.OpenOptions()
+    end)
+
     if alaTradeSkillFrame then
         -- if alaTradeSkill is hooked securely, reposition slightly so we don't overlap their buttons.
         btn:SetPoint("TOPRIGHT", TradeSkillFrame, "TOPRIGHT", -150, -40)
