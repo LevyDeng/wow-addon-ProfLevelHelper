@@ -26,6 +26,9 @@
     "UIDropDownMenu_CreateInfo",
     "UIDropDownMenu_Refresh",
     "UIDropDownMenu_SetSelectedName",
-    "UIDropDownMenu_SetText"
+    "UIDropDownMenu_SetText",
+    "Item",
+    "UIParent",
+    "GameFontHighlightSmall"
   ]
 }
