@@ -29,6 +29,8 @@
     "UIDropDownMenu_SetText",
     "Item",
     "UIParent",
-    "GameFontHighlightSmall"
+    "GameFontHighlightSmall",
+    "ProfessionsFrame",
+    "AuctionHouseFrame"
   ]
 }

@@ -1,12 +1,14 @@
-## Interface: 30405
+## Interface: 38001
 ## Title: ProfLevelHelper
 ## Notes: Profession leveling assistant - AH scan, recipe cost (trainer/vendor/AH), cheapest path.
 ## Author: ProfLevelHelper
 ## X-Email: ptrees@126.com
-## Version: 1.0.0
+## Version: 1.1.6
 ## DefaultState: Enabled
 ## SavedVariables: ProfLevelHelperDB
 
+Compat.lua
+Bootstrap.lua
 FragmentCosts.lua
 VendorPrices.lua
 CooldownRecipes.lua

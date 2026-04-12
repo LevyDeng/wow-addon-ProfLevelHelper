@@ -7,6 +7,32 @@ local ADDON_NAME = "ProfLevelHelper"
 ProfLevelHelper = ProfLevelHelper or {}
 local L = ProfLevelHelper
 
+if ProfLevelHelper_IsAddOnLoaded then
+    L.IsAddOnLoaded = ProfLevelHelper_IsAddOnLoaded
+else
+    function L.IsAddOnLoaded(name)
+        if type(IsAddOnLoaded) ~= "function" then return false end
+        local loaded, finished = IsAddOnLoaded(name)
+        if type(finished) == "boolean" then return finished end
+        return loaded and true or false
+    end
+end
+
+if ProfLevelHelper_LoadAddOn then
+    L.LoadAddOn = ProfLevelHelper_LoadAddOn
+else
+    function L.LoadAddOn(name)
+        if type(LoadAddOn) == "function" then return LoadAddOn(name) end
+        return false, "NO_LOADADDON_API"
+    end
+end
+
+-- strtrim() is not present on all clients; slash handler must not error.
+local function plh_strtrim(s)
+    if not s then return "" end
+    return (s:match("^%s*(.-)%s*$")) or s
+end
+
 -- Default saved DB initialize function
 local function InitDB()
     ProfLevelHelperDB = ProfLevelHelperDB or {}
@@ -86,8 +112,11 @@ local function InitDB()
 end
 
 function L.Print(msg)
-    if DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage("|cff00ccffProfLevelHelper|r: " .. tostring(msg))
+    local text = "|cff00ccffProfLevelHelper|r: " .. tostring(msg)
+    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+        DEFAULT_CHAT_FRAME:AddMessage(text)
+    else
+        print(text)
     end
 end
 
@@ -112,7 +141,7 @@ end)
 
 SlashCmdList["PROFLEVELHELPER"] = function(msg)
     local ok, err = pcall(function()
-        msg = msg and strtrim(msg):lower() or ""
+        msg = plh_strtrim(msg):lower()
         if msg == "scan" or msg == "ah" then
             L.ScanAH()
         elseif msg == "list" or msg == "show" then
@@ -136,6 +165,12 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
                 return
             end
             L.OpenOptions()
+        elseif msg == "dumpui" then
+            if L.DumpUIAnchors then
+                L.DumpUIAnchors()
+            else
+                L.Print("DumpUIAnchors 未加载，请 /reload 后重试。")
+            end
         elseif msg == "debug" then
             L.PrintDebugInfo()
         elseif msg == "testlearn" then
@@ -150,10 +185,12 @@ SlashCmdList["PROFLEVELHELPER"] = function(msg)
                 if not ok2 then L.Print("testcost 报错: " .. tostring(err2)) end
             end
         else
-            L.Print("Usage: /plh scan | list | options | debug | testlearn | testcost [等级]")
+            L.Print("若完全无法使用本插件命令：在角色选择界面点「插件」，勾选「加载过期插件」，并确认 ProfLevelHelper 已启用。")
+            L.Print("Usage: /plh scan | list | options | dumpui | debug | testlearn | testcost [等级]")
             L.Print("  scan    - 扫描拍卖行")
             L.Print("  list    - 显示推荐冲级列表")
             L.Print("  options - 打开设置界面")
+            L.Print("  dumpui  - 列出拍卖/专业相关全局框架与 UIParent 子框架名（排查按钮不显示）")
             L.Print("  debug   - 打印调试信息（故障排查用）")
             L.Print("  testlearn - 检测配方学习等级来源(ala vs 本插件)，需先打开专业窗口")
             L.Print("  testcost [等级] - 在指定等级打印各配方单次/升1级成本，默认175")

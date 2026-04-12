@@ -38,7 +38,11 @@ end
 -- Build list of recipes for current profession. Optional filter: includeHoliday.
 function L.GetRecipeList(includeHoliday)
     if not GetNumTradeSkills then
-        LoadAddOn("Blizzard_TradeSkillUI")
+        if L.LoadAddOn then
+            L.LoadAddOn("Blizzard_TradeSkillUI")
+        elseif LoadAddOn then
+            LoadAddOn("Blizzard_TradeSkillUI")
+        end
     end
     local profName, currentSkill, maxSkill = L.GetCurrentProfessionSkill()
     if not profName then return nil, "请先打开专业技能窗口" end

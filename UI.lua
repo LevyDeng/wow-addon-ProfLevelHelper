@@ -206,15 +206,21 @@ function L.HideScanProgress()
 end
 
 function L.UpdateScanButtonState(customText)
-    local btn = L.ScanAHButton
-    if not btn then return end
-    if L.AHScanRunning then
-        btn:SetEnabled(false)
-        btn:SetText(customText or "扫描中...")
-    else
-        btn:SetEnabled(true)
-        btn:SetText("ProfLevelHelper扫描")
+    local scanText = "ProfLevelHelper扫描"
+    local busyText = customText or "扫描中..."
+    local function apply(btn)
+        if not btn then return end
+        if L.AHScanRunning then
+            btn:SetEnabled(false)
+            btn:SetText(busyText)
+        else
+            btn:SetEnabled(true)
+            btn:SetText(scanText)
+        end
     end
+    apply(L.ScanAHButton)
+    apply(L.AHScanButtonOnAH)
+    apply(L.AHScanFloatBtn)
 end
 
 function L.OpenOptions()
@@ -279,8 +285,6 @@ function L.OpenOptions()
     title:SetPoint("TOP", 0, -16)
     title:SetText("ProfLevelHelper (冲点助手设置)")
     f.title = title
-
-    L.ScanAHButton = nil
 
     local cb = f.checkHoliday or CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     cb:SetPoint("TOPLEFT", 24, -40)
@@ -2557,19 +2561,70 @@ function L.ShowExportFrame()
     f:Show()
 end
 
--- Inject hook button into Blizzard_TradeSkillUI when it loads.
+-- Blizzard profession / tradeskill parent (names differ by client build).
+local function GetTradeSkillParent()
+    if TradeSkillFrame then return TradeSkillFrame end
+    if ProfessionsFrame then return ProfessionsFrame end
+    return nil
+end
+
+local function HideTradeSkillFloatBar()
+    if L.TradeSkillFloatBar then
+        L.TradeSkillFloatBar:Hide()
+    end
+end
+
+local function EnsureTradeSkillFloatBar()
+    if L.TradeSkillFloatBar then
+        L.TradeSkillFloatBar:Show()
+        return
+    end
+    local bar = CreateFrame("Frame", "ProfLevelHelperTradeSkillFloatBar", UIParent, "BackdropTemplate")
+    L.TradeSkillFloatBar = bar
+    bar:SetSize(200, 28)
+    bar:SetPoint("TOP", UIParent, "TOP", 0, -72)
+    bar:SetFrameStrata("HIGH")
+    bar:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    bar:SetBackdropColor(0, 0, 0, 0.85)
+    local btn = CreateFrame("Button", "ProfLevelHelperTradeSkillBtnFloat", bar, "UIPanelButtonTemplate")
+    btn:SetSize(90, 22)
+    btn:SetPoint("LEFT", 6, 0)
+    btn:SetText("冲点助手")
+    btn:SetScript("OnClick", function()
+        if L.ShowResultList then L.ShowResultList() end
+    end)
+    local optBtn = CreateFrame("Button", "ProfLevelHelperOptionsBtnFloat", bar)
+    optBtn:SetSize(24, 24)
+    optBtn:SetPoint("LEFT", btn, "RIGHT", 6, 0)
+    optBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+    optBtn:SetHighlightTexture("Interface\\Buttons\\UI-OptionsButton", "ADD")
+    optBtn:SetScript("OnClick", function()
+        if L.OpenOptions then L.OpenOptions() end
+    end)
+    bar:Show()
+end
+
+-- Inject hook button into Blizzard tradeskill / professions UI when available.
 local function CreateTradeSkillButton()
-    if not TradeSkillFrame or L.TradeSkillButton then return end
-    local btn = CreateFrame("Button", "ProfLevelHelperTradeSkillBtn", TradeSkillFrame, "UIPanelButtonTemplate")
+    if L.TradeSkillButton then return end
+    local parent = GetTradeSkillParent()
+    if not parent then return end
+    HideTradeSkillFloatBar()
+    local btn = CreateFrame("Button", "ProfLevelHelperTradeSkillBtn", parent, "UIPanelButtonTemplate")
     L.TradeSkillButton = btn
     btn:SetSize(90, 22)
-    btn:SetPoint("TOPRIGHT", TradeSkillFrame, "TOPRIGHT", -40, -40)
+    btn:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -40, -40)
     btn:SetText("冲点助手")
     btn:SetScript("OnClick", function()
         L.ShowResultList()
     end)
 
-    local optBtn = CreateFrame("Button", "ProfLevelHelperOptionsBtn", TradeSkillFrame)
+    local optBtn = CreateFrame("Button", "ProfLevelHelperOptionsBtn", parent)
     optBtn:SetSize(24, 24)
     optBtn:SetPoint("RIGHT", btn, "LEFT", -4, 0)
     optBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
@@ -2578,9 +2633,16 @@ local function CreateTradeSkillButton()
         L.OpenOptions()
     end)
 
-    if alaTradeSkillFrame then
-        -- if alaTradeSkill is hooked securely, reposition slightly so we don't overlap their buttons.
-        btn:SetPoint("TOPRIGHT", TradeSkillFrame, "TOPRIGHT", -150, -40)
+    if alaTradeSkillFrame and parent == TradeSkillFrame then
+        btn:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -150, -40)
+    end
+end
+
+local function TryAttachTradeSkillButton(allowFloatFallback)
+    CreateTradeSkillButton()
+    if L.TradeSkillButton then return end
+    if allowFloatFallback then
+        EnsureTradeSkillFloatBar()
     end
 end
 
@@ -2796,51 +2858,174 @@ function L.ShowFragmentDump()
     f:Show()
 end
 
-local ok_ui, err_ui = pcall(function()
-    if IsAddOnLoaded("Blizzard_TradeSkillUI") then
-        CreateTradeSkillButton()
-    else
-        local initFrame = CreateFrame("Frame")
-        initFrame:RegisterEvent("ADDON_LOADED")
-        initFrame:SetScript("OnEvent", function(self, event, addonName)
-            if addonName == "Blizzard_TradeSkillUI" then
-                CreateTradeSkillButton()
-                self:UnregisterEvent("ADDON_LOADED")
-            end
-        end)
+-- Resolve auction house root frame (Classic AuctionFrame vs retail-style AuctionHouseFrame).
+local function GetAuctionHouseParent()
+    pcall(function() L.LoadAddOn("Blizzard_AuctionUI") end)
+    if AuctionFrame then return AuctionFrame, "AuctionFrame" end
+    pcall(function() L.LoadAddOn("Blizzard_AuctionHouseUI") end)
+    if AuctionHouseFrame then return AuctionHouseFrame, "AuctionHouseFrame" end
+    return nil, nil
+end
+
+local function HideAHFloatScanButton()
+    if L.AHScanFloatBtn then
+        L.AHScanFloatBtn:Hide()
     end
+end
+
+local function EnsureAHFloatScanButton()
+    if L.AHScanFloatBtn then
+        L.AHScanFloatBtn:Show()
+        if not L.AHScanButtonOnAH then
+            L.ScanAHButton = L.AHScanFloatBtn
+        end
+        return
+    end
+    local btn = CreateFrame("Button", "ProfLevelHelperAHScanFloatBtn", UIParent, "UIPanelButtonTemplate")
+    L.AHScanFloatBtn = btn
+    btn:SetSize(160, 22)
+    btn:SetPoint("TOP", UIParent, "TOP", 0, -40)
+    btn:SetFrameStrata("HIGH")
+    btn:SetText("ProfLevelHelper扫描")
+    btn:SetScript("OnClick", function()
+        if L.ScanAH then L.ScanAH() end
+    end)
+    if not L.AHScanButtonOnAH then
+        L.ScanAHButton = btn
+    end
+    btn:Show()
+end
+
+-- Scan button on Auction House frame (above the window) or a screen-top fallback if no Blizzard root exists.
+local function CreateAHScanButton()
+    if L.AHScanButtonOnAH then return true end
+    local parent, which = GetAuctionHouseParent()
+    if not parent then return false end
+    HideAHFloatScanButton()
+    local btn = CreateFrame("Button", "ProfLevelHelperAHScanBtn", parent, "UIPanelButtonTemplate")
+    L.AHScanButtonOnAH = btn
+    btn:SetSize(140, 22)
+    if which == "AuctionHouseFrame" then
+        btn:SetPoint("TOP", parent, "TOP", 0, -24)
+    else
+        btn:SetPoint("BOTTOM", parent, "TOP", 0, 4)
+    end
+    btn:SetText("ProfLevelHelper扫描")
+    btn:SetScript("OnClick", function()
+        if L.ScanAH then L.ScanAH() end
+    end)
+    L.ScanAHButton = btn
+    return true
+end
+
+local function TryCreateAHScanButton()
+    if CreateAHScanButton() then return end
+    EnsureAHFloatScanButton()
+end
+
+function L.DumpUIAnchors()
+    local function state(name)
+        local f = _G[name]
+        if not f then return name .. "=nil" end
+        return string.format("%s=ok shown=%s", name, tostring(f.IsShown and f:IsShown() or "?"))
+    end
+    L.Print("PLH dumpui — open AH / tradeskill then run again if all nil.")
+    L.Print(state("AuctionFrame") .. " | " .. state("AuctionHouseFrame"))
+    L.Print(state("TradeSkillFrame") .. " | " .. state("ProfessionsFrame"))
+    local matches = {}
+    for _, c in ipairs({ UIParent:GetChildren() }) do
+        local nm = c.GetName and c:GetName()
+        if nm then
+            local low = nm:lower()
+            if low:find("auction") or low:find("trade") or low:find("profession") or low:find("skill") then
+                matches[#matches + 1] = nm
+            end
+        end
+    end
+    table.sort(matches)
+    local chunk = {}
+    local len = 0
+    for _, nm in ipairs(matches) do
+        if len + #nm > 200 then
+            L.Print("  " .. table.concat(chunk, ", "))
+            chunk = {}
+            len = 0
+        end
+        chunk[#chunk + 1] = nm
+        len = len + #nm + 2
+    end
+    if #chunk > 0 then
+        L.Print("UIParent matches: " .. table.concat(chunk, ", "))
+    else
+        L.Print("UIParent matches: (none)")
+    end
+end
+
+local ok_ui, err_ui = pcall(function()
+    -- allowFloat: only true from TRADE_SKILL_SHOW so we do not show the float bar at login.
+    local function scheduleTradeSkillTry(allowFloat)
+        if allowFloat == nil then allowFloat = false end
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function() TryAttachTradeSkillButton(allowFloat) end)
+            C_Timer.After(0.15, function() TryAttachTradeSkillButton(allowFloat) end)
+        else
+            TryAttachTradeSkillButton(allowFloat)
+        end
+    end
+
+    if L.IsAddOnLoaded("Blizzard_TradeSkillUI") or L.IsAddOnLoaded("Blizzard_Professions") then
+        scheduleTradeSkillTry(false)
+    end
+
+    local initFrame = CreateFrame("Frame")
+    initFrame:RegisterEvent("ADDON_LOADED")
+    initFrame:RegisterEvent("TRADE_SKILL_SHOW")
+    pcall(function()
+        initFrame:RegisterEvent("TRADE_SKILL_CLOSE")
+    end)
+    initFrame:SetScript("OnEvent", function(_, event, addonName)
+        if event == "ADDON_LOADED" then
+            if addonName == "Blizzard_TradeSkillUI" or addonName == "Blizzard_Professions" then
+                scheduleTradeSkillTry(false)
+            end
+        elseif event == "TRADE_SKILL_SHOW" then
+            scheduleTradeSkillTry(true)
+        elseif event == "TRADE_SKILL_CLOSE" then
+            HideTradeSkillFloatBar()
+        end
+    end)
 end)
 if not ok_ui and err_ui then
     (L and L.Print or print)("|cffff0000[PLH UI.lua 加载时报错]|r " .. tostring(err_ui))
 end
 
--- Scan button on Auction House frame (above the AH window) so user can scan without opening options.
-local function CreateAHScanButton()
-    if L.AHScanButtonOnAH or not AuctionFrame then return end
-    LoadAddOn("Blizzard_AuctionUI")
-    if not AuctionFrame then return end
-    local btn = CreateFrame("Button", "ProfLevelHelperAHScanBtn", AuctionFrame, "UIPanelButtonTemplate")
-    L.AHScanButtonOnAH = btn
-    btn:SetSize(140, 22)
-    btn:SetPoint("BOTTOM", AuctionFrame, "TOP", 0, 4)
-    btn:SetText("ProfLevelHelper扫描")
-    btn:SetScript("OnClick", function()
-        if L.ScanAH then L.ScanAH() end
-    end)
-    -- Sync state when scan runs (same as options-panel button).
-    L.ScanAHButton = L.ScanAHButton or btn
-end
-
 do
     local ahFrame = CreateFrame("Frame")
     ahFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
-    ahFrame:SetScript("OnEvent", function()
+    pcall(function()
+        ahFrame:RegisterEvent("AUCTION_HOUSE_CLOSED")
+    end)
+    ahFrame:SetScript("OnEvent", function(_, event)
         local ok, err = pcall(function()
-            CreateAHScanButton()
-            if L.AHScanButtonOnAH and L.UpdateScanButtonState then
-                L.UpdateScanButtonState()
+            if event == "AUCTION_HOUSE_SHOW" then
+                local function try()
+                    if CreateAHScanButton() then
+                        if L.UpdateScanButtonState then L.UpdateScanButtonState() end
+                    else
+                        TryCreateAHScanButton()
+                        if L.UpdateScanButtonState then L.UpdateScanButtonState() end
+                    end
+                end
+                if C_Timer and C_Timer.After then
+                    C_Timer.After(0, try)
+                    C_Timer.After(0.1, try)
+                else
+                    try()
+                end
+            else
+                HideAHFloatScanButton()
             end
         end)
-        if not ok and err then (L and L.Print or print)("|cffff0000[PLH AUCTION_HOUSE_SHOW]|r " .. tostring(err)) end
+        if not ok and err then (L and L.Print or print)("|cffff0000[PLH AH event]|r " .. tostring(err)) end
     end)
 end
